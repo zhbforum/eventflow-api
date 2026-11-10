@@ -6,6 +6,7 @@ namespace App\Controller;
 
 use App\Dto\CreateEventRequest;
 use App\Entity\Event;
+use App\Service\EventPublisher;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Response;
@@ -18,7 +19,7 @@ final class EventController
     public function create(
         #[MapRequestPayload(acceptFormat: 'json')]
         CreateEventRequest $request,
-        EntityManagerInterface $entityManager,
+        EventPublisher $eventPublisher,
     ): JsonResponse {
         $event = new Event(
             $request->type,
@@ -26,8 +27,7 @@ final class EventController
             $request->payload,
         );
 
-        $entityManager->persist($event);
-        $entityManager->flush();
+        $eventPublisher->publish($event);
 
         return new JsonResponse(
             self::toArray($event),

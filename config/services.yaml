@@ -19,5 +19,12 @@ services:
     App\:
         resource: '../src/'
 
+    Symfony\Component\HttpClient\NoPrivateNetworkHttpClient:
+        arguments:
+            $client: '@http_client'
+
+    App\MessageHandler\DeliverWebhookHandler:
+        arguments:
+            $httpClient: '@Symfony\Component\HttpClient\NoPrivateNetworkHttpClient'
     # add more service definitions when explicit configuration is needed
     # please note that last definitions always *replace* previous ones
