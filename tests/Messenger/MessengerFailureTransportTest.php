@@ -9,6 +9,7 @@ use App\Entity\WebhookDelivery;
 use App\Entity\WebhookEndpoint;
 use App\Message\DeliverWebhookMessage;
 use Doctrine\ORM\EntityManagerInterface;
+use PHPUnit\Framework\Attributes\DataProvider;
 use RuntimeException;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\Messenger\Envelope;
@@ -18,14 +19,25 @@ use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 
 final class MessengerFailureTransportTest extends KernelTestCase
 {
-    public function testMessageIsRetriedWhenAttemptsRemain(): void
+    public static function transportNames(): iterable
     {
+        yield 'PostgreSQL transport' => ['async'];
+        yield 'RabbitMQ transport' => ['rabbitmq'];
+    }
+
+    #[DataProvider('transportNames')]
+    public function testMessageIsRetriedWhenAttemptsRemain(
+        string $transportName,
+    ): void {
         self::bootKernel();
 
         $container = self::getContainer();
-        $em = $container->get(EntityManagerInterface::class);
 
-        $delivery = self::createDelivery($em);
+        $entityManager = $container->get(
+            EntityManagerInterface::class,
+        );
+
+        $delivery = self::createDelivery($entityManager);
 
         $envelope = new Envelope(
             new DeliverWebhookMessage($delivery->getId()),
@@ -34,38 +46,63 @@ final class MessengerFailureTransportTest extends KernelTestCase
 
         $event = new WorkerMessageFailedEvent(
             $envelope,
-            'async',
-            new RuntimeException('Webhook returned HTTP 503'),
+            $transportName,
+            new RuntimeException(
+                'Webhook returned HTTP 503',
+            ),
         );
 
-        $container->get('event_dispatcher')->dispatch($event);
+        $container->get('event_dispatcher')
+            ->dispatch($event);
 
-        /** @var InMemoryTransport $async */
-        $async = $container->get('messenger.transport.async');
+        /** @var InMemoryTransport $transport */
+        $transport = $container->get(
+            'messenger.transport.' . $transportName,
+        );
 
         /** @var InMemoryTransport $failed */
-        $failed = $container->get('messenger.transport.failed');
+        $failed = $container->get(
+            'messenger.transport.failed',
+        );
 
         self::assertTrue($event->willRetry());
-        self::assertCount(1, $async->getSent());
-        self::assertCount(0, $failed->getSent());
+
+        self::assertCount(
+            1,
+            $transport->getSent(),
+        );
+
+        self::assertCount(
+            0,
+            $failed->getSent(),
+        );
 
         self::assertSame(
             $delivery->getId(),
-            $async->getSent()[0]->getMessage()->deliveryId,
+            $transport->getSent()[0]
+                ->getMessage()
+                ->deliveryId,
         );
 
-        self::assertSame('pending', $delivery->getStatus());
+        self::assertSame(
+            'pending',
+            $delivery->getStatus(),
+        );
     }
 
-    public function testMessageMovesToFailedAfterRetries(): void
-    {
+    #[DataProvider('transportNames')]
+    public function testMessageMovesToFailedAfterRetries(
+        string $transportName,
+    ): void {
         self::bootKernel();
 
         $container = self::getContainer();
-        $em = $container->get(EntityManagerInterface::class);
 
-        $delivery = self::createDelivery($em);
+        $entityManager = $container->get(
+            EntityManagerInterface::class,
+        );
+
+        $delivery = self::createDelivery($entityManager);
         $deliveryId = $delivery->getId();
 
         $envelope = new Envelope(
@@ -75,36 +112,58 @@ final class MessengerFailureTransportTest extends KernelTestCase
 
         $event = new WorkerMessageFailedEvent(
             $envelope,
-            'async',
-            new RuntimeException('Webhook returned HTTP 503'),
+            $transportName,
+            new RuntimeException(
+                'Webhook returned HTTP 503',
+            ),
         );
 
-        $container->get('event_dispatcher')->dispatch($event);
+        $container->get('event_dispatcher')
+            ->dispatch($event);
 
-        /** @var InMemoryTransport $async */
-        $async = $container->get('messenger.transport.async');
+        /** @var InMemoryTransport $transport */
+        $transport = $container->get(
+            'messenger.transport.' . $transportName,
+        );
 
         /** @var InMemoryTransport $failed */
-        $failed = $container->get('messenger.transport.failed');
+        $failed = $container->get(
+            'messenger.transport.failed',
+        );
 
         self::assertFalse($event->willRetry());
-        self::assertCount(0, $async->getSent());
-        self::assertCount(1, $failed->getSent());
+
+        self::assertCount(
+            0,
+            $transport->getSent(),
+        );
+
+        self::assertCount(
+            1,
+            $failed->getSent(),
+        );
 
         self::assertSame(
             $deliveryId,
-            $failed->getSent()[0]->getMessage()->deliveryId,
+            $failed->getSent()[0]
+                ->getMessage()
+                ->deliveryId,
         );
 
-        // Verify that the failed status was persisted.
-        $em->clear();
+        // Verify the delivery status was persisted.
+        $entityManager->clear();
 
-        $savedDelivery = $em
+        $savedDelivery = $entityManager
             ->getRepository(WebhookDelivery::class)
             ->find($deliveryId);
 
         self::assertNotNull($savedDelivery);
-        self::assertSame('failed', $savedDelivery->getStatus());
+
+        self::assertSame(
+            'failed',
+            $savedDelivery->getStatus(),
+        );
+
         self::assertSame(
             'Webhook returned HTTP 503',
             $savedDelivery->getLastError(),
@@ -112,7 +171,7 @@ final class MessengerFailureTransportTest extends KernelTestCase
     }
 
     private static function createDelivery(
-        EntityManagerInterface $em,
+        EntityManagerInterface $entityManager,
     ): WebhookDelivery {
         $event = new Event(
             'order.created',
@@ -125,14 +184,19 @@ final class MessengerFailureTransportTest extends KernelTestCase
             ['order.created'],
         );
 
-        $delivery = new WebhookDelivery($event, $endpoint);
+        $delivery = new WebhookDelivery(
+            $event,
+            $endpoint,
+        );
 
-        $delivery->recordFailure('Webhook returned HTTP 503');
+        $delivery->recordFailure(
+            'Webhook returned HTTP 503',
+        );
 
-        $em->persist($event);
-        $em->persist($endpoint);
-        $em->persist($delivery);
-        $em->flush();
+        $entityManager->persist($event);
+        $entityManager->persist($endpoint);
+        $entityManager->persist($delivery);
+        $entityManager->flush();
 
         return $delivery;
     }

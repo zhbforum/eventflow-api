@@ -18,11 +18,16 @@ final readonly class WebhookDeliveryFailedListener
 {
     public function __construct(
         private EntityManagerInterface $entityManager,
-    ) {}
+    ) {
+    }
 
     public function __invoke(WorkerMessageFailedEvent $event): void
     {
-        if ($event->getReceiverName() !== 'async') {
+        if (!in_array(
+            $event->getReceiverName(),
+            ['async', 'rabbitmq'],
+            true,
+        )) {
             return;
         }
 

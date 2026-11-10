@@ -5,13 +5,13 @@ declare(strict_types=1);
 namespace App\Tests\Controller;
 
 use App\Entity\Event;
+use App\Entity\OutboxMessage;
 use App\Entity\WebhookDelivery;
 use App\Entity\WebhookEndpoint;
-use App\Message\DeliverWebhookMessage;
 use Doctrine\ORM\EntityManagerInterface;
-use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
 
 final class EventControllerTest extends WebTestCase
 {
@@ -39,14 +39,14 @@ final class EventControllerTest extends WebTestCase
         self::assertSame('ORD-1042', $data['payload']['orderId']);
         self::assertArrayHasKey('id', $data);
         self::assertArrayHasKey('createdAt', $data);
+
         self::assertSame(
             '/api/v1/events/' . $data['id'],
             $client->getResponse()->headers->get('Location'),
         );
     }
 
-
-    public function testEventQueuesDeliveryForMatchingWebhook(): void
+    public function testEventCreatesOutboxForMatchingWebhook(): void
     {
         $client = static::createClient();
 
@@ -73,9 +73,7 @@ final class EventControllerTest extends WebTestCase
             'payload' => ['orderId' => 'ORD-2001'],
         ]);
 
-        self::assertResponseStatusCodeSame(
-            Response::HTTP_CREATED,
-        );
+        self::assertResponseStatusCodeSame(Response::HTTP_CREATED);
 
         $data = json_decode(
             (string) $client->getResponse()->getContent(),
@@ -106,27 +104,38 @@ final class EventControllerTest extends WebTestCase
         self::assertSame('pending', $delivery->getStatus());
         self::assertSame(0, $delivery->getAttempts());
 
-        /** @var InMemoryTransport $transport */
-        $transport = static::getContainer()
-            ->get('messenger.transport.async');
+        // Verify that a matching webhook creates an outbox entry.
+        $outboxMessages = $entityManager
+            ->getRepository(OutboxMessage::class)
+            ->findBy(['delivery' => $delivery]);
 
-        $messages = $transport->getSent();
+        self::assertCount(1, $outboxMessages);
 
-        self::assertCount(1, $messages);
-
-        $message = $messages[0]->getMessage();
-
-        self::assertInstanceOf(
-            DeliverWebhookMessage::class,
-            $message,
-        );
+        $outbox = $outboxMessages[0];
 
         self::assertSame(
             $delivery->getId(),
-            $message->deliveryId,
+            $outbox->getDelivery()->getId(),
         );
-    }
 
+        self::assertNull($outbox->getPublishedAt());
+        self::assertSame(0, $outbox->getPublishAttempts());
+        self::assertNull($outbox->getLastError());
+
+        // No direct dispatch to the old PostgreSQL queue.
+        /** @var InMemoryTransport $asyncTransport */
+        $asyncTransport = static::getContainer()
+            ->get('messenger.transport.async');
+
+        self::assertCount(0, $asyncTransport->getSent());
+
+        // No direct dispatch to RabbitMQ either.
+        /** @var InMemoryTransport $rabbitmqTransport */
+        $rabbitmqTransport = static::getContainer()
+            ->get('messenger.transport.rabbitmq');
+
+        self::assertCount(0, $rabbitmqTransport->getSent());
+    }
 
     public function testRetrieveEvent(): void
     {
@@ -198,6 +207,7 @@ final class EventControllerTest extends WebTestCase
         );
 
         self::assertSame(422, $data['status']);
+
         self::assertSame(
             'type',
             $data['violations'][0]['propertyPath'],

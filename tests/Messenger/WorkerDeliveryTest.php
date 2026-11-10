@@ -10,9 +10,11 @@ use App\Entity\WebhookEndpoint;
 use App\Message\DeliverWebhookMessage;
 use App\MessageHandler\DeliverWebhookHandler;
 use Doctrine\ORM\EntityManagerInterface;
+use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
 use Symfony\Component\HttpClient\MockHttpClient;
 use Symfony\Component\HttpClient\Response\MockResponse;
+use Symfony\Component\Messenger\Envelope;
 use Symfony\Component\Messenger\Event\WorkerMessageHandledEvent;
 use Symfony\Component\Messenger\MessageBusInterface;
 use Symfony\Component\Messenger\Transport\InMemory\InMemoryTransport;
@@ -20,12 +22,23 @@ use Symfony\Component\Messenger\Worker;
 
 final class WorkerDeliveryTest extends KernelTestCase
 {
-    public function testWorkerProcessesWebhookDelivery(): void
+    public static function transportNames(): iterable
     {
+        yield 'PostgreSQL transport' => ['async'];
+        yield 'RabbitMQ transport' => ['rabbitmq'];
+    }
+
+    #[DataProvider('transportNames')]
+    public function testWorkerProcessesWebhookDelivery(
+        string $transportName,
+    ): void {
         self::bootKernel();
 
         $container = self::getContainer();
-        $em = $container->get(EntityManagerInterface::class);
+
+        $entityManager = $container->get(
+            EntityManagerInterface::class,
+        );
 
         $event = new Event(
             'order.created',
@@ -38,12 +51,15 @@ final class WorkerDeliveryTest extends KernelTestCase
             ['order.created'],
         );
 
-        $delivery = new WebhookDelivery($event, $endpoint);
+        $delivery = new WebhookDelivery(
+            $event,
+            $endpoint,
+        );
 
-        $em->persist($event);
-        $em->persist($endpoint);
-        $em->persist($delivery);
-        $em->flush();
+        $entityManager->persist($event);
+        $entityManager->persist($endpoint);
+        $entityManager->persist($delivery);
+        $entityManager->flush();
 
         $deliveryId = $delivery->getId();
         $requestCount = 0;
@@ -56,6 +72,7 @@ final class WorkerDeliveryTest extends KernelTestCase
                 ++$requestCount;
 
                 self::assertSame('POST', $method);
+
                 self::assertSame(
                     'https://example.com/hooks',
                     $url,
@@ -69,19 +86,25 @@ final class WorkerDeliveryTest extends KernelTestCase
 
         $container->set(
             DeliverWebhookHandler::class,
-            new DeliverWebhookHandler($em, $mockHttpClient),
+            new DeliverWebhookHandler(
+                $entityManager,
+                $mockHttpClient,
+            ),
         );
 
         /** @var InMemoryTransport $transport */
         $transport = $container->get(
-            'messenger.transport.async',
+            'messenger.transport.' . $transportName,
         );
 
         $bus = $container->get(MessageBusInterface::class);
-        $dispatcher = $container->get('event_dispatcher');
+
+        $dispatcher = $container->get(
+            'event_dispatcher',
+        );
 
         $worker = new Worker(
-            ['async' => $transport],
+            [$transportName => $transport],
             $bus,
             $dispatcher,
         );
@@ -93,11 +116,24 @@ final class WorkerDeliveryTest extends KernelTestCase
             },
         );
 
-        $bus->dispatch(
-            new DeliverWebhookMessage($deliveryId),
+        $message = new DeliverWebhookMessage(
+            $deliveryId,
         );
 
-        self::assertCount(1, $transport->getSent());
+        if ($transportName === 'async') {
+            $bus->dispatch($message);
+        } else {
+            // The outbox relay publishes directly
+            // to the RabbitMQ transport.
+            $transport->send(
+                new Envelope($message),
+            );
+        }
+
+        self::assertCount(
+            1,
+            $transport->getSent(),
+        );
 
         $worker->run([
             'time_limit' => 2,
@@ -105,21 +141,35 @@ final class WorkerDeliveryTest extends KernelTestCase
         ]);
 
         self::assertSame(1, $requestCount);
-        self::assertCount(1, $transport->getAcknowledged());
-        self::assertCount(0, $transport->getRejected());
 
-        $em->clear();
+        self::assertCount(
+            1,
+            $transport->getAcknowledged(),
+        );
 
-        $savedDelivery = $em
+        self::assertCount(
+            0,
+            $transport->getRejected(),
+        );
+
+        $entityManager->clear();
+
+        $savedDelivery = $entityManager
             ->getRepository(WebhookDelivery::class)
             ->find($deliveryId);
 
         self::assertNotNull($savedDelivery);
+
         self::assertSame(
             'delivered',
             $savedDelivery->getStatus(),
         );
-        self::assertSame(1, $savedDelivery->getAttempts());
+
+        self::assertSame(
+            1,
+            $savedDelivery->getAttempts(),
+        );
+
         self::assertNotNull(
             $savedDelivery->getDeliveredAt(),
         );

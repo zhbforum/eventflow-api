@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   tests:
-    name: PHPUnit & Database
+    name: PHPUnit & Database & RabbitMQ
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -28,8 +28,13 @@ jobs:
       - name: Build PHP container
         run: docker compose build app
 
-      - name: Start PostgreSQL
-        run: docker compose up -d --wait db
+      - name: Start PostgreSQL and RabbitMQ
+        run: docker compose up -d --wait db rabbitmq
+
+      - name: Verify RabbitMQ health
+        run: |
+          docker compose exec -T rabbitmq \
+            rabbitmq-diagnostics -q ping
 
       - name: Validate Composer configuration
         run: |
@@ -56,10 +61,17 @@ jobs:
           docker compose run --rm -e APP_ENV=test app \
             php bin/console doctrine:schema:validate
 
-      - name: Run PHPUnit tests
+      - name: Lint Symfony container
         run: |
           docker compose run --rm -e APP_ENV=test app \
-            php bin/phpunit
+            php bin/console lint:container
+
+      - name: Run PHPUnit with RabbitMQ integration
+        run: |
+          docker compose run --rm \
+            -e APP_ENV=test \
+            -e RUN_RABBITMQ_INTEGRATION=1 \
+            app php bin/phpunit
 
       - name: Clean up containers
         if: always()

@@ -4,7 +4,7 @@ framework:
 
         transports:
             async:
-                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
+                dsn: "%env(MESSENGER_TRANSPORT_DSN)%"
                 options:
                     auto_setup: false
                 retry_strategy:
@@ -14,9 +14,14 @@ framework:
                     max_delay: 10000
 
             failed:
-                dsn: 'doctrine://default?queue_name=failed'
+                dsn: "doctrine://default?queue_name=failed"
                 options:
                     auto_setup: false
+
+            rabbitmq:
+                dsn: "%env(RABBITMQ_TRANSPORT_DSN)%"
+                options:
+                    confirm_timeout: 5
 
         routing:
             'App\Message\DeliverWebhookMessage': async
@@ -25,5 +30,6 @@ when@test:
     framework:
         messenger:
             transports:
-                async: 'in-memory://'
-                failed: 'in-memory://'
+                async: "in-memory://"
+                failed: "in-memory://"
+                rabbitmq: "in-memory://"

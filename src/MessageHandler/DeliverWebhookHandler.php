@@ -23,15 +23,41 @@ final readonly class DeliverWebhookHandler
 
     public function __invoke(DeliverWebhookMessage $message): void
     {
+        $connection = $this->entityManager->getConnection();
+
+        $connection->fetchOne(
+            'SELECT pg_advisory_lock(
+                hashtextextended(CAST(:delivery_id AS text), 0)
+            )',
+            ['delivery_id' => $message->deliveryId],
+        );
+
+        try {
+            $this->deliver($message);
+        } finally {
+            $connection->fetchOne(
+                'SELECT pg_advisory_unlock(
+                    hashtextextended(CAST(:delivery_id AS text), 0)
+                )',
+                ['delivery_id' => $message->deliveryId],
+            );
+        }
+    }
+
+    private function deliver(DeliverWebhookMessage $message): void
+    {
         $delivery = $this->entityManager
             ->getRepository(WebhookDelivery::class)
             ->find($message->deliveryId);
 
         if ($delivery === null) {
-            throw new RuntimeException('Webhook delivery not found');
+            throw new RuntimeException(
+                'Webhook delivery not found',
+            );
         }
 
-        // Don't resend an already completed delivery
+        $this->entityManager->refresh($delivery);
+
         if ($delivery->getStatus() === 'delivered') {
             return;
         }
@@ -39,7 +65,10 @@ final readonly class DeliverWebhookHandler
         $endpoint = $delivery->getEndpoint();
 
         if (!$endpoint->isActive()) {
-            $delivery->markFailed('Webhook endpoint is inactive');
+            $delivery->markFailed(
+                'Webhook endpoint is inactive',
+            );
+
             $this->entityManager->flush();
 
             return;
@@ -53,6 +82,7 @@ final readonly class DeliverWebhookHandler
             || parse_url($url, PHP_URL_PASS) !== null
         ) {
             $delivery->markFailed('Invalid webhook URL');
+
             $this->entityManager->flush();
 
             return;
@@ -64,34 +94,45 @@ final readonly class DeliverWebhookHandler
         $event = $delivery->getEvent();
 
         try {
-            $response = $this->httpClient->request('POST', $url, [
-                'json' => [
-                    'id' => $event->getId(),
-                    'type' => $event->getType(),
-                    'source' => $event->getSource(),
-                    'payload' => $event->getPayload(),
-                    'createdAt' => $event->getCreatedAt()->format(DATE_ATOM),
+            $response = $this->httpClient->request(
+                'POST',
+                $url,
+                [
+                    'json' => [
+                        'id' => $event->getId(),
+                        'type' => $event->getType(),
+                        'source' => $event->getSource(),
+                        'payload' => $event->getPayload(),
+                        'createdAt' => $event
+                            ->getCreatedAt()
+                            ->format(DATE_ATOM),
+                    ],
+                    'headers' => [
+                        'X-EventFlow-Delivery-Id' =>
+                        $delivery->getId(),
+                    ],
+                    'timeout' => 5,
+                    'max_duration' => 10,
+                    'max_redirects' => 0,
+                    'extra' => [
+                        'trace_content' => false,
+                    ],
                 ],
-                'headers' => [
-                    'X-EventFlow-Delivery-Id' => $delivery->getId(),
-                ],
-                'timeout' => 5,
-                'max_duration' => 10,
-                'max_redirects' => 0,
-                'extra' => [
-                    'trace_content' => false,
-                ],
-            ]);
+            );
 
             $status = $response->getStatusCode();
 
             if ($status < 200 || $status >= 300) {
                 throw new RuntimeException(
-                    sprintf('Webhook returned HTTP %d', $status),
+                    sprintf(
+                        'Webhook returned HTTP %d',
+                        $status,
+                    ),
                 );
             }
 
             $delivery->markDelivered();
+
             $this->entityManager->flush();
         } catch (Throwable $exception) {
             $error = $exception instanceof TransportExceptionInterface
@@ -99,9 +140,9 @@ final readonly class DeliverWebhookHandler
                 : $exception->getMessage();
 
             $delivery->recordFailure($error);
+
             $this->entityManager->flush();
 
-            // Let Messenger handle retries
             throw $exception;
         }
     }
