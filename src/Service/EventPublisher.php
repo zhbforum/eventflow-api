@@ -5,18 +5,17 @@ declare(strict_types=1);
 namespace App\Service;
 
 use App\Entity\Event;
+use App\Entity\OutboxMessage;
 use App\Entity\WebhookDelivery;
 use App\Entity\WebhookEndpoint;
-use App\Message\DeliverWebhookMessage;
 use Doctrine\ORM\EntityManagerInterface;
-use Symfony\Component\Messenger\MessageBusInterface;
 
 final readonly class EventPublisher
 {
     public function __construct(
         private EntityManagerInterface $entityManager,
-        private MessageBusInterface $messageBus,
-    ) {}
+    ) {
+    }
 
     public function publish(Event $event): void
     {
@@ -27,8 +26,6 @@ final readonly class EventPublisher
                 $endpoints = $this->entityManager
                     ->getRepository(WebhookEndpoint::class)
                     ->findBy(['isActive' => true]);
-
-                $deliveries = [];
 
                 foreach ($endpoints as $endpoint) {
                     if (!in_array(
@@ -44,18 +41,12 @@ final readonly class EventPublisher
                         $endpoint,
                     );
 
-                    $this->entityManager->persist($delivery);
-                    $deliveries[] = $delivery;
-                }
-
-                $this->entityManager->flush();
-
-                foreach ($deliveries as $delivery) {
-                    $this->messageBus->dispatch(
-                        new DeliverWebhookMessage(
-                            $delivery->getId(),
-                        ),
+                    $outboxMessage = new OutboxMessage(
+                        $delivery,
                     );
+
+                    $this->entityManager->persist($delivery);
+                    $this->entityManager->persist($outboxMessage);
                 }
             },
         );

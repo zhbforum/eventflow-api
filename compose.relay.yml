@@ -1,0 +1,34 @@
+services:
+  outbox-relay:
+    profiles:
+      - relay
+
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    working_dir: /app
+
+    volumes:
+      - .:/app
+
+    environment:
+      APP_ENV: dev
+      DATABASE_URL: "postgresql://eventflow:localdev@db:5432/eventflow?serverVersion=17&charset=utf8"
+      RABBITMQ_TRANSPORT_DSN: "amqp://eventflow:localdev@rabbitmq:5672/%2f/messages"
+      OUTBOX_BATCH_SIZE: "100"
+      OUTBOX_POLL_INTERVAL: "5"
+
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+
+    command:
+      - sh
+      - /app/docker/outbox-relay.sh
+
+    restart: unless-stopped
+
+    stop_grace_period: 15s
