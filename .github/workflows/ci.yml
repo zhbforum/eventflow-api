@@ -150,6 +150,58 @@ jobs:
             -f compose.dashboard.yml \
             up -d --wait app rabbitmq prometheus grafana
 
+      - name: Verify application health endpoints
+        run: |
+          curl --max-time 10 -fsS \
+            http://127.0.0.1:8000/api/health \
+            | jq -e '
+                .status == "ok"
+                and .service == "eventflow-api"
+              '
+
+          curl --max-time 10 -fsS \
+            http://127.0.0.1:8000/health/live \
+            | jq -e '
+                .status == "ok"
+              '
+
+          curl --max-time 10 -fsS \
+            http://127.0.0.1:8000/health/ready \
+            | jq -e '
+                .status == "ready"
+                and .checks.database == "up"
+              '
+
+          echo "All application health endpoints passed"
+
+      - name: Verify Docker application healthcheck
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.metrics.yml \
+            -f compose.dashboard.yml \
+            exec -T app php docker/app-healthcheck.php
+
+          container_id="$(
+            docker compose \
+              -f compose.yml \
+              -f compose.metrics.yml \
+              -f compose.dashboard.yml \
+              ps -q app
+          )"
+
+          test -n "$container_id"
+
+          health_status="$(
+            docker inspect \
+              --format '{{.State.Health.Status}}' \
+              "$container_id"
+          )"
+
+          echo "Application container health: $health_status"
+
+          test "$health_status" = "healthy"
+
       - name: Verify Prometheus targets
         run: |
           for job in eventflow-api rabbitmq; do
