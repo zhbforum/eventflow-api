@@ -1,0 +1,89 @@
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: EventFlow availability alerts
+    interval: 1m
+
+    input_series:
+      - series: 'up{job="eventflow-api",instance="app:8000"}'
+        values: "0x6"
+
+      - series: 'up{job="rabbitmq",instance="rabbitmq:15692"}'
+        values: "1x6"
+
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: EventFlowMetricsDown
+        exp_alerts: []
+
+      - eval_time: 4m
+        alertname: EventFlowMetricsDown
+        exp_alerts:
+          - exp_labels:
+              job: eventflow-api
+              instance: app:8000
+              severity: critical
+            exp_annotations:
+              summary: EventFlow metrics endpoint unavailable
+              description: Prometheus cannot scrape EventFlow API for more than 2 minutes.
+
+      - eval_time: 4m
+        alertname: RabbitMqMetricsDown
+        exp_alerts: []
+
+  - name: RabbitMQ and outbox alerts
+    interval: 1m
+
+    input_series:
+      - series: 'up{job="eventflow-api",instance="app:8000"}'
+        values: "1x12"
+
+      - series: 'up{job="rabbitmq",instance="rabbitmq:15692"}'
+        values: "0x12"
+
+      - series: 'eventflow_outbox_oldest_pending_age_seconds{job="eventflow-api",instance="app:8000"}'
+        values: "360x12"
+
+      - series: 'eventflow_outbox_publish_failures{job="eventflow-api",instance="app:8000"}'
+        values: "2x12"
+
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: EventFlowOutboxStalled
+        exp_alerts: []
+
+      - eval_time: 7m
+        alertname: EventFlowOutboxStalled
+        exp_alerts:
+          - exp_labels:
+              job: eventflow-api
+              instance: app:8000
+              severity: warning
+            exp_annotations:
+              summary: EventFlow outbox publishing is delayed
+              description: The oldest unpublished outbox message has been older than 5 minutes for 5 consecutive minutes.
+
+      - eval_time: 11m
+        alertname: EventFlowOutboxPublishFailures
+        exp_alerts:
+          - exp_labels:
+              job: eventflow-api
+              instance: app:8000
+              severity: warning
+            exp_annotations:
+              summary: EventFlow outbox publication failures detected
+              description: Unpublished outbox messages with recorded publication errors have persisted for 10 minutes.
+
+      - eval_time: 4m
+        alertname: RabbitMqMetricsDown
+        exp_alerts:
+          - exp_labels:
+              job: rabbitmq
+              instance: rabbitmq:15692
+              severity: critical
+            exp_annotations:
+              summary: RabbitMQ metrics endpoint unavailable
+              description: Prometheus cannot scrape RabbitMQ for more than 2 minutes.

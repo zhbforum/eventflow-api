@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   tests:
-    name: PHPUnit & Database & RabbitMQ & Prometheus
+    name: PHPUnit & Database & RabbitMQ & Observability
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -78,17 +78,27 @@ jobs:
           docker compose run --rm -e APP_ENV=dev app \
             php bin/console doctrine:migrations:migrate --no-interaction
 
-      - name: Generate monitoring token
+      - name: Generate monitoring credentials
         run: |
           mkdir -p .secrets
-          openssl rand -hex 32 | tr -d '\r\n' > .secrets/metrics_token
-          test "$(wc -c < .secrets/metrics_token)" -eq 64
 
-      - name: Validate monitoring Compose configuration
+          openssl rand -hex 32 \
+            | tr -d '\r\n' \
+            > .secrets/metrics_token
+
+          openssl rand -hex 24 \
+            | tr -d '\r\n' \
+            > .secrets/grafana_admin_password
+
+          test "$(wc -c < .secrets/metrics_token)" -eq 64
+          test "$(wc -c < .secrets/grafana_admin_password)" -eq 48
+
+      - name: Validate Docker Compose configuration
         run: |
           docker compose \
             -f compose.yml \
             -f compose.metrics.yml \
+            -f compose.dashboard.yml \
             config --quiet
 
       - name: Validate Prometheus configuration
@@ -96,17 +106,49 @@ jobs:
           docker compose \
             -f compose.yml \
             -f compose.metrics.yml \
+            -f compose.dashboard.yml \
             run --rm --no-deps \
             --entrypoint /bin/promtool \
             prometheus \
             check config /etc/prometheus/prometheus.yml
 
-      - name: Start monitoring stack
+      - name: Validate Prometheus alert rules
         run: |
           docker compose \
             -f compose.yml \
             -f compose.metrics.yml \
-            up -d --wait app rabbitmq prometheus
+            -f compose.dashboard.yml \
+            run --rm --no-deps \
+            --entrypoint /bin/promtool \
+            prometheus \
+            check rules /etc/prometheus/alerts.yml
+
+      - name: Test Prometheus alert rules
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.metrics.yml \
+            -f compose.dashboard.yml \
+            run --rm --no-deps \
+            --entrypoint /bin/promtool \
+            prometheus \
+            test rules /etc/prometheus/alerts.test.yml
+
+      - name: Validate Grafana dashboard JSON
+        run: |
+          jq -e '
+            .uid == "eventflow-overview"
+            and .title == "EventFlow Overview"
+            and (.panels | length == 12)
+          ' monitoring/grafana/dashboards/eventflow-overview.json
+
+      - name: Start observability stack
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.metrics.yml \
+            -f compose.dashboard.yml \
+            up -d --wait app rabbitmq prometheus grafana
 
       - name: Verify Prometheus targets
         run: |
@@ -114,7 +156,7 @@ jobs:
             healthy=0
 
             for attempt in $(seq 1 30); do
-              if curl -fsSG \
+              if curl --max-time 5 -fsSG \
                 --data-urlencode "query=up{job=\"$job\"}" \
                 http://127.0.0.1:9090/api/v1/query \
                 | jq -e '
@@ -152,14 +194,92 @@ jobs:
                 and (.data.result | length > 0)
               '
 
-      - name: Show monitoring logs on failure
+      - name: Verify Prometheus alert rules loaded
+        run: |
+          curl --max-time 10 -fsS \
+            http://127.0.0.1:9090/api/v1/rules \
+            | jq -e '
+                .status == "success"
+                and (
+                  [
+                    .data.groups[].rules[]
+                    | select(.type == "alerting")
+                  ] | length == 4
+                )
+              '
+
+      - name: Verify Grafana health
+        run: |
+          healthy=0
+
+          for attempt in $(seq 1 45); do
+            if curl --max-time 5 -fsS \
+              http://127.0.0.1:3000/api/health \
+              | jq -e '.database == "ok"' > /dev/null; then
+              healthy=1
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [ "$healthy" -ne 1 ]; then
+            echo "::error::Grafana is not healthy"
+            exit 1
+          fi
+
+          echo "Grafana is healthy"
+
+      - name: Verify Grafana datasource provisioning
+        run: |
+          password="$(cat .secrets/grafana_admin_password)"
+
+          curl --max-time 10 -fsS \
+            -u "admin:$password" \
+            http://127.0.0.1:3000/api/datasources/uid/eventflow-prometheus \
+            | jq -e '
+                .uid == "eventflow-prometheus"
+                and .type == "prometheus"
+                and .url == "http://prometheus:9090"
+              '
+
+      - name: Verify Grafana dashboard provisioning
+        run: |
+          password="$(cat .secrets/grafana_admin_password)"
+          ready=0
+
+          for attempt in $(seq 1 30); do
+            if curl --max-time 10 -fsS \
+              -u "admin:$password" \
+              http://127.0.0.1:3000/api/dashboards/uid/eventflow-overview \
+              | jq -e '
+                  .dashboard.uid == "eventflow-overview"
+                  and .dashboard.title == "EventFlow Overview"
+                  and (.dashboard.panels | length == 12)
+                ' > /dev/null; then
+              ready=1
+              break
+            fi
+
+            sleep 2
+          done
+
+          if [ "$ready" -ne 1 ]; then
+            echo "::error::Grafana dashboard provisioning failed"
+            exit 1
+          fi
+
+          echo "EventFlow Overview dashboard provisioned: 12 panels"
+
+      - name: Show observability logs on failure
         if: failure()
         run: |
           docker compose \
             -f compose.yml \
             -f compose.metrics.yml \
+            -f compose.dashboard.yml \
             logs --no-color --tail=100 \
-            app prometheus rabbitmq || true
+            app prometheus rabbitmq grafana || true
 
       - name: Clean up containers
         if: always()
@@ -167,4 +287,5 @@ jobs:
           docker compose \
             -f compose.yml \
             -f compose.metrics.yml \
+            -f compose.dashboard.yml \
             down --volumes --remove-orphans
