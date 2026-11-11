@@ -25,8 +25,27 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Build PHP container
-        run: docker compose build app
+      - name: Build PHP and worker images
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.workers.yml \
+            build app worker outbox-relay
+
+      - name: Verify PCNTL extension
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.workers.yml \
+            run --rm --no-deps app \
+            php -r '
+              if (!extension_loaded("pcntl")) {
+                  fwrite(STDERR, "PCNTL is missing\n");
+                  exit(1);
+              }
+
+              echo "PCNTL OK\n";
+            '
 
       - name: Start PostgreSQL and RabbitMQ
         run: docker compose up -d --wait db rabbitmq
@@ -71,7 +90,127 @@ jobs:
           docker compose run --rm \
             -e APP_ENV=test \
             -e RUN_RABBITMQ_INTEGRATION=1 \
-            app php bin/phpunit
+            app php bin/phpunit \
+            --display-phpunit-notices \
+            --fail-on-phpunit-notice
+
+      - name: Validate worker command configuration
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.workers.yml \
+            run --rm --no-deps \
+            -e APP_ENV=test \
+            app php bin/console app:outbox:relay --help
+
+          docker compose \
+            -f compose.yml \
+            -f compose.workers.yml \
+            run --rm --no-deps \
+            -e APP_ENV=test \
+            app php bin/console messenger:consume --help
+
+      - name: Smoke test graceful worker shutdown
+        run: |
+          compose_files=(
+            -f compose.yml
+            -f compose.workers.yml
+            -f compose.metrics.yml
+            -f compose.dashboard.yml
+          )
+
+          trap '
+            docker rm -f \
+              eventflow-worker-smoke \
+              eventflow-outbox-relay-smoke \
+              >/dev/null 2>&1 || true
+          ' EXIT
+
+          for service in worker outbox-relay; do
+            name="eventflow-${service}-smoke"
+
+            if [ "$service" = "worker" ]; then
+              expected_start='Consuming messages from transport'
+            else
+              expected_start='Outbox relay started.'
+            fi
+
+            echo "Starting $service in test environment"
+
+            docker compose "${compose_files[@]}" \
+              run -d --no-deps \
+              --name "$name" \
+              -e APP_ENV=test \
+              "$service"
+
+            started=0
+
+            for attempt in $(seq 1 20); do
+              if docker logs "$name" 2>&1 \
+                | grep -F "$expected_start" >/dev/null; then
+                started=1
+                break
+              fi
+
+              running="$(
+                docker inspect \
+                  --format '{{.State.Running}}' \
+                  "$name"
+              )"
+
+              if [ "$running" != "true" ]; then
+                echo "::error::$service exited before startup"
+                docker logs "$name"
+                exit 1
+              fi
+
+              sleep 1
+            done
+
+            if [ "$started" -ne 1 ]; then
+              echo "::error::$service did not start"
+              docker logs "$name"
+              exit 1
+            fi
+
+            test "$(
+              docker inspect \
+                --format '{{.State.Running}}' \
+                "$name"
+            )" = "true"
+
+            echo "Sending SIGTERM to $service"
+
+            docker stop --timeout 20 "$name"
+
+            exit_code="$(
+              docker inspect \
+                --format '{{.State.ExitCode}}' \
+                "$name"
+            )"
+
+            docker logs "$name"
+
+            if [ "$exit_code" != "0" ]; then
+              echo "::error::$service exited with $exit_code"
+              exit 1
+            fi
+
+            if [ "$service" = "worker" ]; then
+              docker logs "$name" 2>&1 \
+                | grep -F 'Received signal 15.' >/dev/null
+
+              docker logs "$name" 2>&1 \
+                | grep -F 'Stopping worker.' >/dev/null
+            else
+              docker logs "$name" 2>&1 \
+                | grep -F 'Outbox relay stopped gracefully.' >/dev/null
+            fi
+
+            echo "$service stopped gracefully"
+
+            docker rm "$name"
+          done
 
       - name: Prepare development database for monitoring
         run: |
@@ -97,6 +236,7 @@ jobs:
         run: |
           docker compose \
             -f compose.yml \
+            -f compose.workers.yml \
             -f compose.metrics.yml \
             -f compose.dashboard.yml \
             config --quiet
@@ -105,6 +245,7 @@ jobs:
         run: |
           docker compose \
             -f compose.yml \
+            -f compose.workers.yml \
             -f compose.metrics.yml \
             -f compose.dashboard.yml \
             run --rm --no-deps \
@@ -116,6 +257,7 @@ jobs:
         run: |
           docker compose \
             -f compose.yml \
+            -f compose.workers.yml \
             -f compose.metrics.yml \
             -f compose.dashboard.yml \
             run --rm --no-deps \
@@ -127,6 +269,7 @@ jobs:
         run: |
           docker compose \
             -f compose.yml \
+            -f compose.workers.yml \
             -f compose.metrics.yml \
             -f compose.dashboard.yml \
             run --rm --no-deps \
@@ -146,6 +289,7 @@ jobs:
         run: |
           docker compose \
             -f compose.yml \
+            -f compose.workers.yml \
             -f compose.metrics.yml \
             -f compose.dashboard.yml \
             up -d --wait app rabbitmq prometheus grafana
@@ -178,6 +322,7 @@ jobs:
         run: |
           docker compose \
             -f compose.yml \
+            -f compose.workers.yml \
             -f compose.metrics.yml \
             -f compose.dashboard.yml \
             exec -T app php docker/app-healthcheck.php
@@ -185,6 +330,7 @@ jobs:
           container_id="$(
             docker compose \
               -f compose.yml \
+              -f compose.workers.yml \
               -f compose.metrics.yml \
               -f compose.dashboard.yml \
               ps -q app
@@ -323,21 +469,31 @@ jobs:
 
           echo "EventFlow Overview dashboard provisioned: 12 panels"
 
-      - name: Show observability logs on failure
+      - name: Show logs on failure
         if: failure()
         run: |
           docker compose \
             -f compose.yml \
+            -f compose.workers.yml \
             -f compose.metrics.yml \
             -f compose.dashboard.yml \
             logs --no-color --tail=100 \
-            app prometheus rabbitmq grafana || true
+            app rabbitmq prometheus grafana || true
+
+          docker logs eventflow-worker-smoke || true
+          docker logs eventflow-outbox-relay-smoke || true
 
       - name: Clean up containers
         if: always()
         run: |
+          docker rm -f \
+            eventflow-worker-smoke \
+            eventflow-outbox-relay-smoke \
+            >/dev/null 2>&1 || true
+
           docker compose \
             -f compose.yml \
+            -f compose.workers.yml \
             -f compose.metrics.yml \
             -f compose.dashboard.yml \
             down --volumes --remove-orphans

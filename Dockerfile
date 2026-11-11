@@ -8,9 +8,10 @@ RUN apt-get update && apt-get install -y \
     libzip-dev \
     librabbitmq-dev \
     && docker-php-ext-install \
-    intl \
-    pdo_pgsql \
-    zip \
+        intl \
+        pdo_pgsql \
+        pcntl \
+        zip \
     && pecl install amqp \
     && docker-php-ext-enable amqp \
     && rm -rf /var/lib/apt/lists/*
