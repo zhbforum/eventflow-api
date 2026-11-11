@@ -1,0 +1,43 @@
+x-worker-common: &worker-common
+  build:
+    context: .
+    dockerfile: Dockerfile
+  working_dir: /app
+  volumes:
+    - .:/app
+  environment:
+    COMPOSER_ALLOW_SUPERUSER: "1"
+    DATABASE_URL: "postgresql://eventflow:localdev@db:5432/eventflow?serverVersion=17&charset=utf8"
+    RABBITMQ_TRANSPORT_DSN: "amqp://eventflow:localdev@rabbitmq:5672/%2f/messages"
+  depends_on:
+    db:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+  init: true
+  stop_signal: SIGTERM
+  stop_grace_period: 90s
+  restart: unless-stopped
+
+services:
+  worker:
+    <<: *worker-common
+    command:
+      - php
+      - bin/console
+      - messenger:consume
+      - rabbitmq
+      - --limit=100
+      - --time-limit=3600
+      - --memory-limit=128M
+      - --failure-limit=10
+      - -vv
+
+  outbox-relay:
+    <<: *worker-common
+    command:
+      - php
+      - bin/console
+      - app:outbox:relay
+      - --batch-size=10
+      - --idle-delay-ms=1000
