@@ -1,0 +1,52 @@
+groups:
+  - name: eventflow-availability
+    interval: 30s
+
+    rules:
+      - alert: EventFlowMetricsDown
+        expr: up{job="eventflow-api"} == 0
+        for: 2m
+
+        labels:
+          severity: critical
+
+        annotations:
+          summary: EventFlow metrics endpoint unavailable
+          description: Prometheus cannot scrape EventFlow API for more than 2 minutes.
+
+      - alert: RabbitMqMetricsDown
+        expr: up{job="rabbitmq"} == 0
+        for: 2m
+
+        labels:
+          severity: critical
+
+        annotations:
+          summary: RabbitMQ metrics endpoint unavailable
+          description: Prometheus cannot scrape RabbitMQ for more than 2 minutes.
+
+  - name: eventflow-outbox
+    interval: 30s
+
+    rules:
+      - alert: EventFlowOutboxStalled
+        expr: eventflow_outbox_oldest_pending_age_seconds > 300
+        for: 5m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: EventFlow outbox publishing is delayed
+          description: The oldest unpublished outbox message has been older than 5 minutes for 5 consecutive minutes.
+
+      - alert: EventFlowOutboxPublishFailures
+        expr: eventflow_outbox_publish_failures > 0
+        for: 10m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: EventFlow outbox publication failures detected
+          description: Unpublished outbox messages with recorded publication errors have persisted for 10 minutes.

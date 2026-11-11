@@ -24,6 +24,8 @@ services:
 
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - ./monitoring/alerts.test.yml:/etc/prometheus/alerts.test.yml:ro
       - prometheus_data:/prometheus
 
     secrets:
