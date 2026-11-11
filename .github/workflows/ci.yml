@@ -73,6 +73,11 @@ jobs:
             -e RUN_RABBITMQ_INTEGRATION=1 \
             app php bin/phpunit
 
+      - name: Prepare development database for monitoring
+        run: |
+          docker compose run --rm -e APP_ENV=dev app \
+            php bin/console doctrine:migrations:migrate --no-interaction
+
       - name: Generate monitoring token
         run: |
           mkdir -p .secrets
@@ -147,6 +152,19 @@ jobs:
                 and (.data.result | length > 0)
               '
 
+      - name: Show monitoring logs on failure
+        if: failure()
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.metrics.yml \
+            logs --no-color --tail=100 \
+            app prometheus rabbitmq || true
+
       - name: Clean up containers
         if: always()
-        run: docker compose -f compose.yml -f compose.metrics.yml down --volumes --remove-orphans
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.metrics.yml \
+            down --volumes --remove-orphans
