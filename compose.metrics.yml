@@ -1,0 +1,51 @@
+services:
+  app:
+    secrets:
+      - metrics_token
+
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        export METRICS_TOKEN="$$(cat /run/secrets/metrics_token)"
+        exec php -S 0.0.0.0:8000 -t public public/index.php
+
+  rabbitmq:
+    hostname: rabbitmq
+
+    volumes:
+      - ./monitoring/rabbitmq/enabled_plugins:/etc/rabbitmq/enabled_plugins:ro
+
+  prometheus:
+    image: prom/prometheus:v3.16.0
+
+    ports:
+      - "127.0.0.1:9090:9090"
+
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+
+    secrets:
+      - metrics_token
+
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.listen-address=0.0.0.0:9090
+
+    depends_on:
+      app:
+        condition: service_started
+      rabbitmq:
+        condition: service_healthy
+
+    restart: unless-stopped
+
+secrets:
+  metrics_token:
+    file: ./.secrets/metrics_token
+
+volumes:
+  prometheus_data:

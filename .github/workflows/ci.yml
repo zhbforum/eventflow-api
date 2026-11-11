@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   tests:
-    name: PHPUnit & Database & RabbitMQ
+    name: PHPUnit & Database & RabbitMQ & Prometheus
     runs-on: ubuntu-24.04
     timeout-minutes: 30
 
@@ -73,6 +73,98 @@ jobs:
             -e RUN_RABBITMQ_INTEGRATION=1 \
             app php bin/phpunit
 
+      - name: Prepare development database for monitoring
+        run: |
+          docker compose run --rm -e APP_ENV=dev app \
+            php bin/console doctrine:migrations:migrate --no-interaction
+
+      - name: Generate monitoring token
+        run: |
+          mkdir -p .secrets
+          openssl rand -hex 32 | tr -d '\r\n' > .secrets/metrics_token
+          test "$(wc -c < .secrets/metrics_token)" -eq 64
+
+      - name: Validate monitoring Compose configuration
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.metrics.yml \
+            config --quiet
+
+      - name: Validate Prometheus configuration
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.metrics.yml \
+            run --rm --no-deps \
+            --entrypoint /bin/promtool \
+            prometheus \
+            check config /etc/prometheus/prometheus.yml
+
+      - name: Start monitoring stack
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.metrics.yml \
+            up -d --wait app rabbitmq prometheus
+
+      - name: Verify Prometheus targets
+        run: |
+          for job in eventflow-api rabbitmq; do
+            healthy=0
+
+            for attempt in $(seq 1 30); do
+              if curl -fsSG \
+                --data-urlencode "query=up{job=\"$job\"}" \
+                http://127.0.0.1:9090/api/v1/query \
+                | jq -e '
+                    .status == "success"
+                    and any(.data.result[]; .value[1] == "1")
+                  ' > /dev/null; then
+                healthy=1
+                break
+              fi
+
+              sleep 2
+            done
+
+            if [ "$healthy" -ne 1 ]; then
+              echo "::error::Prometheus target $job is not UP"
+
+              curl -fsS \
+                http://127.0.0.1:9090/api/v1/targets \
+                | jq '.data.activeTargets[] |
+                    {scrapePool, health, lastError}' || true
+
+              exit 1
+            fi
+
+            echo "Prometheus target $job is UP"
+          done
+
+      - name: Verify EventFlow metrics ingestion
+        run: |
+          curl -fsSG \
+            --data-urlencode 'query=eventflow_webhook_endpoints_total' \
+            http://127.0.0.1:9090/api/v1/query \
+            | jq -e '
+                .status == "success"
+                and (.data.result | length > 0)
+              '
+
+      - name: Show monitoring logs on failure
+        if: failure()
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.metrics.yml \
+            logs --no-color --tail=100 \
+            app prometheus rabbitmq || true
+
       - name: Clean up containers
         if: always()
-        run: docker compose down --volumes --remove-orphans
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.metrics.yml \
+            down --volumes --remove-orphans
