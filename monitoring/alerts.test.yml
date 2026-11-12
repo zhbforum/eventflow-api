@@ -87,3 +87,70 @@ tests:
             exp_annotations:
               summary: RabbitMQ metrics endpoint unavailable
               description: Prometheus cannot scrape RabbitMQ for more than 2 minutes.
+
+  - name: Critical outbox backlog alert
+    interval: 1m
+
+    input_series:
+      - series: 'eventflow_outbox_stale_messages{age="15m",job="eventflow-api",instance="app:8000"}'
+        values: "0x2 1x15"
+
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: EventFlowOutboxCriticalBacklog
+        exp_alerts: []
+
+      - eval_time: 10m
+        alertname: EventFlowOutboxCriticalBacklog
+        exp_alerts:
+          - exp_labels:
+              age: 15m
+              job: eventflow-api
+              instance: app:8000
+              severity: critical
+            exp_annotations:
+              summary: EventFlow outbox has critically delayed messages
+              description: At least one unpublished outbox message has been older than 15 minutes for 5 consecutive minutes.
+
+  - name: Growing outbox backlog alert
+    interval: 1m
+
+    input_series:
+      - series: 'eventflow_outbox_messages{state="pending",job="eventflow-api",instance="app:8000"}'
+        values: "0+2x25"
+
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: EventFlowOutboxBacklogGrowing
+        exp_alerts: []
+
+      - eval_time: 20m
+        alertname: EventFlowOutboxBacklogGrowing
+        exp_alerts:
+          - exp_labels:
+              state: pending
+              job: eventflow-api
+              instance: app:8000
+              severity: warning
+            exp_annotations:
+              summary: EventFlow outbox backlog is growing
+              description: The number of pending outbox messages has increased by more than 10 over 10 minutes and has remained above this growth threshold for 5 minutes.
+
+  - name: Healthy outbox has no additional alerts
+    interval: 1m
+
+    input_series:
+      - series: 'eventflow_outbox_stale_messages{age="15m",job="eventflow-api",instance="app:8000"}'
+        values: "0x20"
+
+      - series: 'eventflow_outbox_messages{state="pending",job="eventflow-api",instance="app:8000"}'
+        values: "0x20"
+
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: EventFlowOutboxCriticalBacklog
+        exp_alerts: []
+
+      - eval_time: 15m
+        alertname: EventFlowOutboxBacklogGrowing
+        exp_alerts: []

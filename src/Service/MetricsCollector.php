@@ -70,6 +70,20 @@ final readonly class MetricsCollector
                           AND last_error IS NOT NULL
                     ) AS publish_failures,
 
+                    COUNT(*) FILTER (
+                        WHERE published_at IS NULL
+                          AND created_at <=
+                              (NOW() AT TIME ZONE 'UTC')
+                              - INTERVAL '5 minutes'
+                    ) AS older_than_5m,
+
+                    COUNT(*) FILTER (
+                        WHERE published_at IS NULL
+                          AND created_at <=
+                              (NOW() AT TIME ZONE 'UTC')
+                              - INTERVAL '15 minutes'
+                    ) AS older_than_15m,
+
                     COALESCE(
                         EXTRACT(EPOCH FROM (
                             (NOW() AT TIME ZONE 'UTC')
@@ -170,6 +184,19 @@ final readonly class MetricsCollector
                 self::formatSeconds(
                     $outbox['oldest_pending_age_seconds'] ?? 0,
                 ),
+            ),
+
+            '# HELP eventflow_outbox_stale_messages Number of unpublished outbox messages older than the specified age.',
+            '# TYPE eventflow_outbox_stale_messages gauge',
+
+            sprintf(
+                'eventflow_outbox_stale_messages{age="5m"} %d',
+                (int) ($outbox['older_than_5m'] ?? 0),
+            ),
+
+            sprintf(
+                'eventflow_outbox_stale_messages{age="15m"} %d',
+                (int) ($outbox['older_than_15m'] ?? 0),
             ),
 
             '# HELP eventflow_webhook_endpoints_active Number of active webhook endpoints.',

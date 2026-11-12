@@ -282,7 +282,7 @@ jobs:
           jq -e '
             .uid == "eventflow-overview"
             and .title == "EventFlow Overview"
-            and (.panels | length == 12)
+            and (.panels | length == 14)
           ' monitoring/grafana/dashboards/eventflow-overview.json
 
       - name: Start observability stack
@@ -392,6 +392,16 @@ jobs:
                 and (.data.result | length > 0)
               '
 
+      - name: Verify Outbox stale metrics ingestion
+        run: |
+          curl -fsSG \
+            --data-urlencode 'query=eventflow_outbox_stale_messages{age="5m"}' \
+            http://127.0.0.1:9090/api/v1/query \
+            | jq -e '
+                .status == "success"
+                and (.data.result | length > 0)
+              '
+
       - name: Verify Prometheus alert rules loaded
         run: |
           curl --max-time 10 -fsS \
@@ -402,7 +412,7 @@ jobs:
                   [
                     .data.groups[].rules[]
                     | select(.type == "alerting")
-                  ] | length == 4
+                  ] | length == 6
                 )
               '
 
@@ -453,7 +463,7 @@ jobs:
               | jq -e '
                   .dashboard.uid == "eventflow-overview"
                   and .dashboard.title == "EventFlow Overview"
-                  and (.dashboard.panels | length == 12)
+                  and (.dashboard.panels | length == 14)
                 ' > /dev/null; then
               ready=1
               break
