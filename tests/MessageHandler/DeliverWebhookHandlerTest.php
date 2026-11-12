@@ -128,6 +128,11 @@ final class DeliverWebhookHandlerTest extends KernelTestCase
             ) use (&$requests): MockResponse {
                 ++$requests;
 
+                self::assertSame('POST', $method);
+                self::assertSame(
+                    'https://example.com/hooks',
+                    $url,
+                );
                 self::assertSame(0, $options['max_redirects']);
 
                 return new MockResponse('', [
