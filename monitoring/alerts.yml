@@ -50,3 +50,25 @@ groups:
         annotations:
           summary: EventFlow outbox publication failures detected
           description: Unpublished outbox messages with recorded publication errors have persisted for 10 minutes.
+
+      - alert: EventFlowOutboxCriticalBacklog
+        expr: eventflow_outbox_stale_messages{age="15m"} > 0
+        for: 5m
+
+        labels:
+          severity: critical
+
+        annotations:
+          summary: EventFlow outbox has critically delayed messages
+          description: At least one unpublished outbox message has been older than 15 minutes for 5 consecutive minutes.
+
+      - alert: EventFlowOutboxBacklogGrowing
+        expr: delta(eventflow_outbox_messages{state="pending"}[10m]) > 10
+        for: 5m
+
+        labels:
+          severity: warning
+
+        annotations:
+          summary: EventFlow outbox backlog is growing
+          description: The number of pending outbox messages has increased by more than 10 over 10 minutes and has remained above this growth threshold for 5 minutes.
