@@ -1,0 +1,59 @@
+# syntax=docker/dockerfile:1
+
+FROM dunglas/frankenphp:1-php8.4-bookworm AS php-base
+
+RUN install-php-extensions \
+    amqp \
+    intl \
+    pdo_pgsql \
+    pcntl \
+    zip \
+    opcache
+
+WORKDIR /app
+
+ENV APP_ENV=prod \
+    APP_DEBUG=0 \
+    APP_RUNTIME_OPTIONS='{"disable_dotenv":true}'
+
+FROM php-base AS build
+
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+
+COPY composer.json composer.lock symfony.lock ./
+
+RUN composer install \
+    --no-dev \
+    --no-scripts \
+    --no-autoloader \
+    --prefer-dist \
+    --no-interaction \
+    --no-progress
+
+COPY . /app
+
+RUN composer dump-autoload \
+    --no-dev \
+    --classmap-authoritative \
+    --no-scripts
+
+FROM php-base AS runtime
+
+RUN cp "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
+
+COPY --from=build /app /app
+
+COPY docker/Caddyfile.prod /etc/frankenphp/Caddyfile
+
+RUN mkdir -p /app/var /data /config \
+    && chown -R www-data:www-data /app/var /data /config
+
+ENV SERVER_NAME=:8000 \
+    XDG_DATA_HOME=/data \
+    XDG_CONFIG_HOME=/config
+
+USER www-data
+
+EXPOSE 8000
+
+CMD ["frankenphp", "run", "--config", "/etc/frankenphp/Caddyfile"]
