@@ -8,7 +8,9 @@ metadata:
     app.kubernetes.io/component: worker
 
 spec:
+  {{- if not .Values.keda.enabled }}
   replicas: {{ .Values.worker.replicas }}
+  {{- end }}
   revisionHistoryLimit: 3
 
   selector:

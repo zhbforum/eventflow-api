@@ -1,0 +1,29 @@
+{{- if .Values.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+
+metadata:
+  name: {{ include "eventflow.fullname" . }}-worker
+  labels:
+    {{- include "eventflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+
+spec:
+  scaleTargetRef:
+    name: {{ include "eventflow.fullname" . }}-worker
+
+  minReplicaCount: {{ .Values.keda.worker.minReplicas }}
+  maxReplicaCount: {{ .Values.keda.worker.maxReplicas }}
+
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        vhostName: "/"
+        queueName: {{ .Values.keda.worker.queueName | quote }}
+        mode: QueueLength
+        value: {{ .Values.keda.worker.queueLength | quote }}
+
+      authenticationRef:
+        name: {{ include "eventflow.fullname" . }}-worker-rabbitmq
+{{- end }}

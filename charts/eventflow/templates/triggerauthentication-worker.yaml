@@ -1,0 +1,16 @@
+{{- if .Values.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+
+metadata:
+  name: {{ include "eventflow.fullname" . }}-worker-rabbitmq
+  labels:
+    {{- include "eventflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: worker
+
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: {{ .Values.runtimeSecret.name | quote }}
+      key: KEDA_RABBITMQ_HOST
+{{- end }}
