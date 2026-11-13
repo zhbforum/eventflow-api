@@ -1,0 +1,53 @@
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  repository: ghcr.io/zhbforum/eventflow-api
+  tag: "sha-04c3259fb32535c50c55766913cc4423a76848a2"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: ghcr-pull
+
+runtimeSecret:
+  name: eventflow-runtime
+
+config:
+  defaultUri: "http://eventflow-eventflow-api.eventflow.svc.cluster.local:8000"
+
+api:
+  replicas: 1
+
+  service:
+    type: ClusterIP
+    port: 8000
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+worker:
+  replicas: 1
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+outboxRelay:
+  replicas: 1
+
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 250m
+      memory: 256Mi
