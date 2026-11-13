@@ -591,29 +591,64 @@ jobs:
       - name: Lint Helm chart
         run: |
           helm lint --strict ./charts/eventflow
+          helm lint --strict ./charts/eventflow \
+            --set keda.enabled=true
 
       - name: Render Kubernetes manifests
         run: |
           helm template eventflow ./charts/eventflow \
             --namespace eventflow \
-            > "$RUNNER_TEMP/eventflow-rendered.yaml"
+            > "$RUNNER_TEMP/eventflow-default.yaml"
+
+          helm template eventflow ./charts/eventflow \
+            --namespace eventflow \
+            --set keda.enabled=true \
+            > "$RUNNER_TEMP/eventflow-keda.yaml"
+
+          helm template eventflow ./charts/eventflow \
+            --namespace eventflow \
+            --set keda.enabled=true \
+            --show-only templates/deployment-worker.yaml \
+            > "$RUNNER_TEMP/worker-keda.yaml"
 
       - name: Validate rendered resources
         run: |
           set -euo pipefail
 
-          rendered="$RUNNER_TEMP/eventflow-rendered.yaml"
+          default="$RUNNER_TEMP/eventflow-default.yaml"
+          keda="$RUNNER_TEMP/eventflow-keda.yaml"
+          worker="$RUNNER_TEMP/worker-keda.yaml"
 
-          test "$(grep -c '^kind: Deployment$' "$rendered")" -eq 3
-          test "$(grep -c '^kind: Service$' "$rendered")" -eq 1
-          test "$(grep -c '^kind: ConfigMap$' "$rendered")" -eq 1
+          for rendered in "$default" "$keda"; do
+            test "$(grep -c '^kind: Deployment$' "$rendered")" -eq 3
+            test "$(grep -c '^kind: Service$' "$rendered")" -eq 1
+            test "$(grep -c '^kind: ConfigMap$' "$rendered")" -eq 1
 
-          grep -Fq 'name: ghcr-pull' "$rendered"
-          grep -Eq 'name: "?eventflow-runtime"?' "$rendered"
-          grep -Fq 'path: /health/live' "$rendered"
-          grep -Fq 'path: /health/ready' "$rendered"
+            grep -Fq 'name: ghcr-pull' "$rendered"
+            grep -Eq 'name: "?eventflow-runtime"?' "$rendered"
+            grep -Fq 'path: /health/live' "$rendered"
+            grep -Fq 'path: /health/ready' "$rendered"
+          done
 
-          echo "Helm manifests validated: 3 Deployments, 1 Service, 1 ConfigMap"
+          test "$(grep -c '^kind: ScaledObject$' "$keda")" -eq 1
+          test "$(grep -c '^kind: TriggerAuthentication$' "$keda")" -eq 1
+
+          grep -Fq 'key: KEDA_RABBITMQ_HOST' "$keda"
+          grep -Fq 'queueName: "messages"' "$keda"
+          grep -Fq 'minReplicaCount: 1' "$keda"
+          grep -Fq 'maxReplicaCount: 5' "$keda"
+
+          if grep -Eq '^kind: (ScaledObject|TriggerAuthentication)$' "$default"; then
+            echo "KEDA resources must be disabled by default"
+            exit 1
+          fi
+
+          if grep -Eq '^  replicas:' "$worker"; then
+            echo "KEDA-managed Worker must not set spec.replicas"
+            exit 1
+          fi
+
+          echo "Helm validation passed with KEDA disabled and enabled"
 
   publish-production-image:
     name: Publish image to GHCR
