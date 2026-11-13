@@ -1,0 +1,72 @@
+apiVersion: apps/v1
+kind: Deployment
+
+metadata:
+  name: {{ include "eventflow.fullname" . }}-outbox-relay
+  labels:
+    {{- include "eventflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: outbox-relay
+
+spec:
+  replicas: {{ .Values.outboxRelay.replicas }}
+  revisionHistoryLimit: 3
+
+  selector:
+    matchLabels:
+      {{- include "eventflow.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: outbox-relay
+
+  template:
+    metadata:
+      labels:
+        {{- include "eventflow.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: outbox-relay
+
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+
+    spec:
+      automountServiceAccountToken: false
+
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      terminationGracePeriodSeconds: 90
+
+      containers:
+        - name: outbox-relay
+
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          command:
+            - php
+            - bin/console
+            - app:outbox:relay
+            - --batch-size=10
+            - --idle-delay-ms=1000
+
+          envFrom:
+            - configMapRef:
+                name: {{ include "eventflow.fullname" . }}-config
+
+            - secretRef:
+                name: {{ .Values.runtimeSecret.name | quote }}
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 33
+            runAsGroup: 33
+            allowPrivilegeEscalation: false
+
+            capabilities:
+              drop:
+                - ALL
+
+            seccompProfile:
+              type: RuntimeDefault
+
+          resources:
+            {{- toYaml .Values.outboxRelay.resources | nindent 12 }}

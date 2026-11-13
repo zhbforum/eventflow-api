@@ -1,0 +1,151 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  labels:
+    app: eventflow-local-postgres
+spec:
+  type: ClusterIP
+  selector:
+    app: eventflow-local-postgres
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  labels:
+    app: eventflow-local-postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: eventflow-local-postgres
+
+  template:
+    metadata:
+      labels:
+        app: eventflow-local-postgres
+
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:17
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 5432
+              name: postgres
+
+          envFrom:
+            - secretRef:
+                name: eventflow-local-infra
+
+          readinessProbe:
+            exec:
+              command:
+                - pg_isready
+                - -U
+                - eventflow
+                - -d
+                - eventflow
+            periodSeconds: 5
+            timeoutSeconds: 3
+            failureThreshold: 10
+
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+
+      volumes:
+        - name: postgres-data
+          emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rabbitmq
+  labels:
+    app: eventflow-local-rabbitmq
+spec:
+  type: ClusterIP
+  selector:
+    app: eventflow-local-rabbitmq
+
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+      protocol: TCP
+
+    - name: management
+      port: 15672
+      targetPort: 15672
+      protocol: TCP
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rabbitmq
+  labels:
+    app: eventflow-local-rabbitmq
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+
+  selector:
+    matchLabels:
+      app: eventflow-local-rabbitmq
+
+  template:
+    metadata:
+      labels:
+        app: eventflow-local-rabbitmq
+
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4.3-management
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - containerPort: 5672
+              name: amqp
+
+            - containerPort: 15672
+              name: management
+
+          envFrom:
+            - secretRef:
+                name: eventflow-local-infra
+
+          readinessProbe:
+            exec:
+              command:
+                - rabbitmq-diagnostics
+                - -q
+                - check_running
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 12
+
+          livenessProbe:
+            exec:
+              command:
+                - rabbitmq-diagnostics
+                - -q
+                - ping
+            initialDelaySeconds: 30
+            periodSeconds: 20
+            timeoutSeconds: 5

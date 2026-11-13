@@ -1,0 +1,7 @@
+apiVersion: v2
+name: eventflow
+description: Kubernetes Helm chart for EventFlow API
+type: application
+
+version: 0.1.0
+appVersion: "0.1.0"

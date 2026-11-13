@@ -16,3 +16,5 @@ phpunit.dist.xml
 phpstan.neon.dist
 phpcs.xml.dist
 compose*.yml
+/charts
+/k8s
