@@ -609,7 +609,7 @@ jobs:
           test "$(grep -c '^kind: ConfigMap$' "$rendered")" -eq 1
 
           grep -Fq 'name: ghcr-pull' "$rendered"
-          grep -Fq 'name: eventflow-runtime' "$rendered"
+          grep -Eq 'name: "?eventflow-runtime"?' "$rendered"
           grep -Fq 'path: /health/live' "$rendered"
           grep -Fq 'path: /health/ready' "$rendered"
 
