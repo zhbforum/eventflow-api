@@ -18,8 +18,7 @@ final readonly class WebhookDeliveryFailedListener
 {
     public function __construct(
         private EntityManagerInterface $entityManager,
-    ) {
-    }
+    ) {}
 
     public function __invoke(WorkerMessageFailedEvent $event): void
     {
@@ -41,28 +40,48 @@ final readonly class WebhookDeliveryFailedListener
             return;
         }
 
-        $delivery = $this->entityManager
-            ->getRepository(WebhookDelivery::class)
-            ->find($message->deliveryId);
+        $connection = $this->entityManager->getConnection();
 
-        if ($delivery === null) {
-            return;
+        $connection->fetchOne(
+            'SELECT pg_advisory_lock(
+                hashtextextended(CAST(:delivery_id AS text), 0)
+            )',
+            ['delivery_id' => $message->deliveryId],
+        );
+
+        try {
+            $delivery = $this->entityManager
+                ->getRepository(WebhookDelivery::class)
+                ->find($message->deliveryId);
+
+            if ($delivery === null) {
+                return;
+            }
+
+            $this->entityManager->refresh($delivery);
+
+            if (in_array(
+                $delivery->getStatus(),
+                ['delivered', 'failed'],
+                true,
+            )) {
+                return;
+            }
+
+            $error = $delivery->getLastError()
+                ?? 'Webhook delivery failed: '
+                . $event->getThrowable()->getMessage();
+
+            $delivery->markFailed($error);
+
+            $this->entityManager->flush();
+        } finally {
+            $connection->fetchOne(
+                'SELECT pg_advisory_unlock(
+                    hashtextextended(CAST(:delivery_id AS text), 0)
+                )',
+                ['delivery_id' => $message->deliveryId],
+            );
         }
-
-        if (in_array(
-            $delivery->getStatus(),
-            ['delivered', 'failed'],
-            true,
-        )) {
-            return;
-        }
-
-        $error = $delivery->getLastError()
-            ?? 'Webhook delivery failed: '
-            . $event->getThrowable()->getMessage();
-
-        $delivery->markFailed($error);
-
-        $this->entityManager->flush();
     }
 }

@@ -94,6 +94,7 @@ try {
                 private string $stateFile,
             ) {}
 
+            // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter -- Required by SenderInterface.
             public function send(Envelope $envelope): Envelope
             {
                 $this->entityManager->flush();

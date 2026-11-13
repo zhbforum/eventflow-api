@@ -85,7 +85,7 @@ final class OutboxRelayCommandTest extends TestCase
             ->expects(self::once())
             ->method('wrapInTransaction')
             ->willReturnCallback(
-                static function (callable $operation) use ($command): ?bool {
+                static function () use ($command): ?bool {
                     self::assertFalse(
                         $command->handleSignal(SIGTERM),
                     );

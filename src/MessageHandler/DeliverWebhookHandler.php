@@ -58,7 +58,11 @@ final readonly class DeliverWebhookHandler
 
         $this->entityManager->refresh($delivery);
 
-        if ($delivery->getStatus() === 'delivered') {
+        if (in_array(
+            $delivery->getStatus(),
+            ['delivered', 'failed'],
+            true,
+        )) {
             return;
         }
 

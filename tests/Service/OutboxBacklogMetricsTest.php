@@ -62,7 +62,7 @@ final class OutboxBacklogMetricsTest extends KernelTestCase
                 UPDATE outbox_messages
                 SET created_at =
                     (NOW() AT TIME ZONE 'UTC')
-                    - INTERVAL '20 minutes'
+                    - INTERVAL '21 minutes'
                 WHERE id = :id
                 SQL,
             ['id' => $veryOld->getId()],

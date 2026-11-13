@@ -51,6 +51,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
         return [SIGTERM, SIGINT];
     }
 
+    // phpcs:ignore Generic.CodeAnalysis.UnusedFunctionParameter -- Required by SignalableCommandInterface.
     public function handleSignal(
         int $signal,
         int|false $previousExitCode = 0,
@@ -102,6 +103,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
 
         $io->writeln('Outbox relay started.');
 
+        // @phpstan-ignore booleanNot.alwaysTrue (SIGTERM/SIGINT can change the flag asynchronously.)
         while (!$this->stopRequested) {
             $result = $this->publisher->publish($batchSize);
 
@@ -117,6 +119,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
                 );
             }
 
+            // @phpstan-ignore if.alwaysFalse (A signal may arrive during the current batch.)
             if ($this->stopRequested) {
                 break;
             }
@@ -139,6 +142,7 @@ final class OutboxRelayCommand extends Command implements SignalableCommandInter
             }
         }
 
+        // @phpstan-ignore deadCode.unreachable (The signal handler can terminate the loop.)
         $io->success('Outbox relay stopped gracefully.');
 
         return Command::SUCCESS;
