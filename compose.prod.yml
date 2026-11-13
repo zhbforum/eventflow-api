@@ -1,0 +1,54 @@
+x-runtime: &runtime
+  image: ${EVENTFLOW_IMAGE:-eventflow-api:prod-local}
+  env_file:
+    - ./.secrets/prod-runtime.env
+  init: true
+  restart: unless-stopped
+
+services:
+  api:
+    <<: *runtime
+    command:
+      - frankenphp
+      - run
+      - --config
+      - /etc/frankenphp/Caddyfile
+    ports:
+      - "127.0.0.1:8001:8000"
+    healthcheck:
+      test: ["CMD", "php", "/app/docker/app-healthcheck.php"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+
+  worker:
+    <<: *runtime
+    command:
+      - php
+      - bin/console
+      - messenger:consume
+      - rabbitmq
+      - --limit=100
+      - --time-limit=3600
+      - --memory-limit=128M
+      - --failure-limit=10
+      - -vv
+    stop_signal: SIGTERM
+    stop_grace_period: 90s
+
+  outbox-relay:
+    <<: *runtime
+    command:
+      - php
+      - bin/console
+      - app:outbox:relay
+      - --batch-size=10
+      - --idle-delay-ms=1000
+    stop_signal: SIGTERM
+    stop_grace_period: 90s
+
+networks:
+  default:
+    external: true
+    name: ${EVENTFLOW_NETWORK:?Set EVENTFLOW_NETWORK}

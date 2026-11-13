@@ -523,3 +523,98 @@ jobs:
             -f compose.metrics.yml \
             -f compose.dashboard.yml \
             down --volumes --remove-orphans
+
+  production-image:
+    name: Build production Docker image
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build production image
+        run: |
+          docker build \
+            --file Dockerfile.prod \
+            --target runtime \
+            --tag eventflow-api:ci \
+            .
+
+      - name: Verify production image
+        run: |
+          docker run --rm \
+            --entrypoint sh \
+            eventflow-api:ci \
+            -ec '
+              test "$(id -u)" != "0"
+              test -f /app/public/index.php
+              test -f /app/vendor/autoload_runtime.php
+              test -f /etc/frankenphp/Caddyfile
+              test ! -e /app/.env
+              test ! -d /app/tests
+              test ! -d /app/.secrets
+
+              php -m | grep -Fx amqp
+              php -m | grep -Fx intl
+              php -m | grep -Fx pdo_pgsql
+              php -m | grep -Fx pcntl
+              php -m | grep -Fx zip
+
+              echo "Production image verified"
+            '
+
+  publish-production-image:
+    name: Publish image to GHCR
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [tests, production-image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build release image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+
+          docker build \
+            --file Dockerfile.prod \
+            --target runtime \
+            --label "org.opencontainers.image.source=https://github.com/$GITHUB_REPOSITORY" \
+            --tag "$image:sha-$GITHUB_SHA" \
+            .
+
+          docker tag \
+            "$image:sha-$GITHUB_SHA" \
+            "$image:latest"
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$GHCR_TOKEN" | docker login ghcr.io \
+            --username "$GITHUB_ACTOR" \
+            --password-stdin
+
+      - name: Push release image
+        run: |
+          image="ghcr.io/${GITHUB_REPOSITORY,,}"
+
+          docker push "$image:sha-$GITHUB_SHA"
+          docker push "$image:latest"
+
+          echo "Published: $image:sha-$GITHUB_SHA"
+          echo "Published: $image:latest"
