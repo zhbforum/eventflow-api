@@ -650,6 +650,72 @@ jobs:
 
           echo "Helm validation passed with KEDA disabled and enabled"
 
+      - name: Validate GitOps configuration
+        run: |
+          set -euo pipefail
+
+          helm lint --strict ./charts/eventflow \
+            -f ./charts/eventflow/values-k3d.yaml
+
+          helm template eventflow ./charts/eventflow \
+            --namespace eventflow \
+            -f ./charts/eventflow/values-k3d.yaml \
+            > "$RUNNER_TEMP/eventflow-k3d.yaml"
+
+          rendered="$RUNNER_TEMP/eventflow-k3d.yaml"
+
+          test "$(grep -c '^kind: Deployment$' "$rendered")" -eq 3
+          test "$(grep -c '^kind: Service$' "$rendered")" -eq 1
+          test "$(grep -c '^kind: ConfigMap$' "$rendered")" -eq 1
+          test "$(grep -c '^kind: ScaledObject$' "$rendered")" -eq 1
+          test "$(grep -c '^kind: TriggerAuthentication$' "$rendered")" -eq 1
+
+          grep -Fq 'name: ghcr-pull' "$rendered"
+          grep -Fq 'key: KEDA_RABBITMQ_HOST' "$rendered"
+
+          image_tag="$(ruby -ryaml -e '
+            puts YAML.load_file(ARGV.fetch(0)).fetch("image").fetch("tag")
+          ' charts/eventflow/values-k3d.yaml)"
+
+          grep -Fq "ghcr.io/zhbforum/eventflow-api:${image_tag}" "$rendered"
+
+          ruby -e '
+            require "yaml"
+
+            app = YAML.load_file(ARGV.fetch(0))
+            abort "Invalid Argo CD Application" unless app["kind"] == "Application"
+
+            spec = app.fetch("spec")
+            source = spec.fetch("source")
+            destination = spec.fetch("destination")
+            policy = spec.fetch("syncPolicy", {})
+
+            abort "Incorrect Git repository" unless
+              source["repoURL"] == "git@github.com:zhbforum/eventflow-api.git"
+
+            abort "Incorrect Git revision" unless
+              source["targetRevision"] == "main"
+
+            abort "Incorrect chart path" unless
+              source["path"] == "charts/eventflow"
+
+            abort "Missing k3d values file" unless
+              source.fetch("helm").fetch("valueFiles").include?("values-k3d.yaml")
+
+            abort "Incorrect namespace" unless
+              destination["namespace"] == "eventflow"
+
+            abort "Automatic sync must be disabled" if
+              policy.key?("automated")
+
+            abort "Prune must not be enabled" if
+              policy.fetch("syncOptions", []).include?("PruneLast=true")
+
+            puts "Argo CD Application validated"
+          ' gitops/argocd/eventflow-application.yaml
+
+          echo "GitOps validation passed"
+
   publish-production-image:
     name: Publish image to GHCR
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
