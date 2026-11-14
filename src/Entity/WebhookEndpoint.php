@@ -73,4 +73,14 @@ final class WebhookEndpoint
     {
         return $this->createdAt;
     }
+
+    public function update(
+        string $url,
+        array $subscribedEvents,
+        bool $isActive,
+    ): void {
+        $this->url = $url;
+        $this->subscribedEvents = $subscribedEvents;
+        $this->isActive = $isActive;
+    }
 }

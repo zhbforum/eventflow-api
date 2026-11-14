@@ -11,7 +11,13 @@ final class WebhookControllerTest extends WebTestCase
 {
     public function testCreateWebhook(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->jsonRequest('POST', '/api/v1/webhooks', [
             'url' => 'https://example.com/webhooks',
@@ -51,7 +57,13 @@ final class WebhookControllerTest extends WebTestCase
 
     public function testRetrieveWebhook(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->jsonRequest('POST', '/api/v1/webhooks', [
             'url' => 'https://example.com/webhooks',
@@ -90,7 +102,13 @@ final class WebhookControllerTest extends WebTestCase
 
     public function testRetrieveNonexistentWebhook(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->request(
             'GET',
@@ -104,7 +122,13 @@ final class WebhookControllerTest extends WebTestCase
 
     public function testRejectInsecureUrl(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->jsonRequest('POST', '/api/v1/webhooks', [
             'url' => 'http://localhost:8080/webhook',
@@ -130,7 +154,13 @@ final class WebhookControllerTest extends WebTestCase
 
     public function testRejectDuplicateSubscriptions(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->jsonRequest('POST', '/api/v1/webhooks', [
             'url' => 'https://example.com/webhooks',
@@ -160,7 +190,13 @@ final class WebhookControllerTest extends WebTestCase
 
     public function testRejectEmptySubscriptions(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->jsonRequest('POST', '/api/v1/webhooks', [
             'url' => 'https://example.com/webhooks',
@@ -174,7 +210,13 @@ final class WebhookControllerTest extends WebTestCase
 
     public function testRejectInvalidEventType(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->jsonRequest('POST', '/api/v1/webhooks', [
             'url' => 'https://example.com/webhooks',

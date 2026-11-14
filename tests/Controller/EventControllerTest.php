@@ -17,7 +17,13 @@ final class EventControllerTest extends WebTestCase
 {
     public function testCreateEvent(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->jsonRequest('POST', '/api/v1/events', [
             'type' => 'order.created',
@@ -48,7 +54,13 @@ final class EventControllerTest extends WebTestCase
 
     public function testEventCreatesOutboxForMatchingWebhook(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $entityManager = static::getContainer()
             ->get(EntityManagerInterface::class);
@@ -139,7 +151,13 @@ final class EventControllerTest extends WebTestCase
 
     public function testRetrieveEvent(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->jsonRequest('POST', '/api/v1/events', [
             'type' => 'user.registered',
@@ -175,7 +193,13 @@ final class EventControllerTest extends WebTestCase
 
     public function testRetrieveNonexistentEvent(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->request(
             'GET',
@@ -187,7 +211,13 @@ final class EventControllerTest extends WebTestCase
 
     public function testCreateEventWithInvalidData(): void
     {
-        $client = static::createClient();
+        $client = static::createClient(
+            [],
+            [
+                'HTTP_AUTHORIZATION' =>
+                'Bearer eventflow-test-management-token',
+            ],
+        );
 
         $client->jsonRequest('POST', '/api/v1/events', [
             'type' => '',
