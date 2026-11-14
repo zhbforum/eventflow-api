@@ -1,0 +1,35 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+
+metadata:
+  name: eventflow
+  namespace: argocd
+
+spec:
+  project: default
+
+  source:
+    repoURL: git@github.com:zhbforum/eventflow-api.git
+    targetRevision: main
+    path: charts/eventflow
+
+    helm:
+      releaseName: eventflow
+      valueFiles:
+        - values-k3d.yaml
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: eventflow
+
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      name: eventflow-eventflow-worker
+      namespace: eventflow
+      jsonPointers:
+        - /spec/replicas
+
+  syncPolicy:
+    syncOptions:
+      - RespectIgnoreDifferences=true

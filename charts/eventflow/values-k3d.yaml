@@ -1,0 +1,21 @@
+# Local k3d GitOps configuration for EventFlow.
+
+image:
+  repository: ghcr.io/zhbforum/eventflow-api
+  tag: "sha-9d70b37d392245256335a3b1f1fb6f561cd7bb57"
+  pullPolicy: IfNotPresent
+
+imagePullSecrets:
+  - name: ghcr-pull
+
+runtimeSecret:
+  name: eventflow-runtime
+
+keda:
+  enabled: true
+
+  worker:
+    minReplicas: 1
+    maxReplicas: 5
+    queueName: messages
+    queueLength: "5"
