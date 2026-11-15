@@ -1,0 +1,54 @@
+services:
+  keycloak-db:
+    image: postgres:17
+
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD}
+
+    volumes:
+      - keycloak_db_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready -U keycloak -d keycloak
+      interval: 5s
+      timeout: 3s
+      retries: 15
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+
+    command:
+      - start-dev
+
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://keycloak-db:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD:?Set KEYCLOAK_DB_PASSWORD}
+
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?Set KEYCLOAK_ADMIN_PASSWORD}
+
+      KC_HTTP_PORT: "8081"
+      KC_HOSTNAME: http://auth.eventflow.localhost:8081
+
+    ports:
+      - "127.0.0.1:8081:8081"
+
+    depends_on:
+      keycloak-db:
+        condition: service_healthy
+
+    networks:
+      default:
+        aliases:
+          - auth.eventflow.localhost
+
+    mem_limit: 1g
+
+volumes:
+  keycloak_db_data:
