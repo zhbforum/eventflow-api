@@ -131,21 +131,8 @@ spec:
                 name: eventflow-local-infra
 
           readinessProbe:
-            exec:
-              command:
-                - rabbitmq-diagnostics
-                - -q
-                - check_running
+            tcpSocket:
+              port: amqp
             periodSeconds: 10
-            timeoutSeconds: 5
+            timeoutSeconds: 3
             failureThreshold: 12
-
-          livenessProbe:
-            exec:
-              command:
-                - rabbitmq-diagnostics
-                - -q
-                - ping
-            initialDelaySeconds: 30
-            periodSeconds: 20
-            timeoutSeconds: 5

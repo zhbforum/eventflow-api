@@ -13,14 +13,14 @@ use Symfony\Component\Security\Http\Event\LogoutEvent;
 final readonly class OidcLogoutSubscriber implements EventSubscriberInterface
 {
     public function __construct(
-        #[Autowire('%env(OIDC_ISSUER)%')]
-        private string $issuer,
+        #[Autowire('%env(default::OIDC_ISSUER)%')]
+        private ?string $issuer,
 
-        #[Autowire('%env(OIDC_CLIENT_ID)%')]
-        private string $clientId,
+        #[Autowire('%env(default::OIDC_CLIENT_ID)%')]
+        private ?string $clientId,
 
-        #[Autowire('%env(OIDC_POST_LOGOUT_REDIRECT_URI)%')]
-        private string $postLogoutRedirectUri,
+        #[Autowire('%env(default::OIDC_POST_LOGOUT_REDIRECT_URI)%')]
+        private ?string $postLogoutRedirectUri,
     ) {}
 
     public static function getSubscribedEvents(): array
@@ -35,6 +35,14 @@ final readonly class OidcLogoutSubscriber implements EventSubscriberInterface
         if (
             $event->getRequest()->attributes->get('_route')
             !== 'api_auth_logout'
+        ) {
+            return;
+        }
+
+        if (
+            !$this->issuer
+            || !$this->clientId
+            || !$this->postLogoutRedirectUri
         ) {
             return;
         }
