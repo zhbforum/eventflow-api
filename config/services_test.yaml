@@ -1,0 +1,8 @@
+services:
+  App\Security\OidcProviderFactory:
+    autowire: true
+    public: true
+
+  App\Security\OidcIdTokenVerifier:
+    autowire: true
+    public: true
