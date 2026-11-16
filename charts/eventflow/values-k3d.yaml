@@ -19,3 +19,6 @@ keda:
     maxReplicas: 5
     queueName: messages
     queueLength: "5"
+
+migrations:
+  enabled: true

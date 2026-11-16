@@ -67,7 +67,8 @@ spec:
 
       volumes:
         - name: postgres-data
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: eventflow-postgres-data
 
 ---
 apiVersion: v1

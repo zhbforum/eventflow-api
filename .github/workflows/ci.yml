@@ -650,6 +650,31 @@ jobs:
 
           echo "Helm validation passed with KEDA disabled and enabled"
 
+      - name: Validate PreSync migration Job
+        run: |
+          set -euo pipefail
+
+          rendered="$RUNNER_TEMP/eventflow-migrations.yaml"
+
+          helm template eventflow ./charts/eventflow \
+            --namespace eventflow \
+            -f ./charts/eventflow/values-k3d.yaml \
+            --show-only templates/job-migrations.yaml \
+            > "$rendered"
+
+          grep -Fxq "kind: Job" "$rendered"
+          grep -Fq "argocd.argoproj.io/hook: PreSync" "$rendered"
+          grep -Fq "BeforeHookCreation,HookSucceeded" "$rendered"
+          grep -Fq "doctrine:migrations:migrate" "$rendered"
+          grep -Fq "eventflow-runtime" "$rendered"
+
+          if grep -Fq "configMapRef:" "$rendered"; then
+            echo "::error::PreSync Job must not depend on ConfigMap"
+            exit 1
+          fi
+
+          echo "PreSync migration Job validated"
+
       - name: Validate GitOps configuration
         run: |
           set -euo pipefail
@@ -705,8 +730,10 @@ jobs:
             abort "Incorrect namespace" unless
               destination["namespace"] == "eventflow"
 
-            abort "Automatic sync must be disabled" if
-              policy.key?("automated")
+            automated = policy.fetch("automated", {})
+            abort "Auto-sync must be enabled" unless automated["enabled"] == true
+            abort "Auto-prune must be disabled" unless automated["prune"] == false
+            abort "Self-heal must be enabled" unless automated["selfHeal"] == true
 
             abort "Prune must not be enabled" if
               policy.fetch("syncOptions", []).include?("PruneLast=true")
@@ -765,3 +792,73 @@ jobs:
 
           echo "Published: $image:sha-$GITHUB_SHA"
           echo "Published: $image:latest"
+
+  update-gitops-image:
+    name: Update GitOps image tag
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [publish-production-image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: true
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v4.3.2
+
+      - name: Update GitOps image tag
+        env:
+          IMAGE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          latest_sha="$(
+            git ls-remote origin refs/heads/main | cut -f1
+          )"
+
+          if [ "$latest_sha" != "$IMAGE_SHA" ]; then
+            echo "Main has advanced. Skipping outdated deployment."
+            exit 0
+          fi
+
+          file="charts/eventflow/values-k3d.yaml"
+          image_tag="sha-${IMAGE_SHA}"
+
+          sed -i -E \
+            "s|^([[:space:]]*tag:[[:space:]]*).*$|\1\"${image_tag}\"|" \
+            "$file"
+
+          ruby -ryaml -e '
+            actual = YAML.load_file(ARGV.fetch(0))
+              .fetch("image")
+              .fetch("tag")
+
+            abort "Image tag mismatch" unless actual == ARGV.fetch(1)
+          ' "$file" "$image_tag"
+
+          helm lint --strict ./charts/eventflow \
+            -f "$file"
+
+          if git diff --quiet -- "$file"; then
+            echo "GitOps image tag is already up to date."
+            exit 0
+          fi
+
+          git config user.name "github-actions[bot]"
+          git config user.email \
+            "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add "$file"
+
+          git commit -m \
+            "chore(gitops): deploy ${image_tag} [skip ci]"
+
+          git push origin HEAD:refs/heads/main
