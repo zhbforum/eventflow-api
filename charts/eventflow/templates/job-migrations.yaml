@@ -1,0 +1,80 @@
+{{- if .Values.migrations.enabled }}
+apiVersion: batch/v1
+kind: Job
+
+metadata:
+  name: {{ include "eventflow.fullname" . }}-migrations
+
+  labels:
+    {{- include "eventflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: migrations
+
+  annotations:
+    argocd.argoproj.io/hook: PreSync
+    argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
+
+spec:
+  backoffLimit: 1
+  activeDeadlineSeconds: 300
+
+  template:
+    metadata:
+      labels:
+        {{- include "eventflow.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: migrations
+
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+
+      containers:
+        - name: migrations
+
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+          command:
+            - php
+            - bin/console
+            - doctrine:migrations:migrate
+            - --no-interaction
+
+          env:
+            - name: APP_ENV
+              value: "prod"
+            - name: APP_DEBUG
+              value: "0"
+            - name: DEFAULT_URI
+              value: {{ .Values.config.defaultUri | quote }}
+
+          envFrom:
+
+            - secretRef:
+                name: {{ .Values.runtimeSecret.name | quote }}
+
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 33
+            runAsGroup: 33
+            allowPrivilegeEscalation: false
+
+            capabilities:
+              drop:
+                - ALL
+
+            seccompProfile:
+              type: RuntimeDefault
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+{{- end }}
