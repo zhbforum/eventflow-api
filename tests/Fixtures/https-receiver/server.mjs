@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 let signingSecret = null;
+let failuresRemaining = 0;
+let verifiedAttempts = 0;
 const received = new Map();
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -61,7 +63,20 @@ const server = createServer(
                     return;
                 }
 
+                const failures = config.failuresBeforeSuccess ?? 0;
+
+                if (
+                    !Number.isInteger(failures) ||
+                    failures < 0 ||
+                    failures > 3
+                ) {
+                    respond(response, 400, "Invalid failure count");
+                    return;
+                }
+
                 signingSecret = config.secret;
+                failuresRemaining = failures;
+                verifiedAttempts = 0;
                 received.clear();
 
                 respond(response, 204);
@@ -79,6 +94,8 @@ const server = createServer(
                 response.end(
                     JSON.stringify({
                         count: received.size,
+                        verifiedAttempts,
+                        failuresRemaining,
                         deliveries: Array.from(received, ([id, payload]) => ({
                             id,
                             payload,
@@ -151,6 +168,17 @@ const server = createServer(
 
             if (received.has(deliveryId)) {
                 respond(response, 204);
+                return;
+            }
+
+            verifiedAttempts += 1;
+
+            if (failuresRemaining > 0) {
+                failuresRemaining -= 1;
+
+                console.log(`Simulated HTTP 503: ${deliveryId}`);
+
+                respond(response, 503, "Temporary failure");
                 return;
             }
 

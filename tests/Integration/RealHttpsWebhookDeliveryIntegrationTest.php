@@ -18,6 +18,7 @@ use Symfony\Component\Messenger\Bridge\Amqp\Transport\AmqpTransport;
 use Symfony\Component\Messenger\Bridge\Amqp\Transport\Connection;
 use Symfony\Component\Messenger\Event\WorkerMessageHandledEvent;
 use Symfony\Component\Messenger\MessageBusInterface;
+use Symfony\Component\Messenger\Event\WorkerMessageRetriedEvent;
 use Symfony\Component\Messenger\Worker;
 
 final class RealHttpsWebhookDeliveryIntegrationTest extends KernelTestCase
@@ -240,6 +241,317 @@ final class RealHttpsWebhookDeliveryIntegrationTest extends KernelTestCase
         }
     }
 
+    public function testRecoversFromHttp503UsingRealRabbitMqRetry(): void
+    {
+        if (getenv('RUN_HTTPS_E2E_INTEGRATION') !== '1') {
+            self::markTestSkipped(
+                'Set RUN_HTTPS_E2E_INTEGRATION=1 to run.',
+            );
+        }
+
+        self::bootKernel();
+
+        $container = static::getContainer();
+
+        $entityManager = $container->get(
+            EntityManagerInterface::class,
+        );
+
+        $dsn = $_ENV['RABBITMQ_TRANSPORT_DSN']
+            ?? $_SERVER['RABBITMQ_TRANSPORT_DSN']
+            ?? '';
+
+        self::assertNotSame('', $dsn);
+
+        $httpClient = HttpClient::create([
+            'cafile' => '/tls/ca.crt',
+            'verify_peer' => true,
+            'verify_host' => true,
+            'timeout' => 5,
+        ]);
+
+        $receiverUrl = 'https://webhook-receiver:8443';
+
+        self::assertSame(
+            200,
+            $httpClient->request(
+                'GET',
+                $receiverUrl . '/health',
+            )->getStatusCode(),
+        );
+
+        $event = new Event(
+            'order.created',
+            'https-retry-integration-test',
+            ['orderId' => 'ORD-HTTPS-RETRY-001'],
+        );
+
+        $endpoint = new WebhookEndpoint(
+            $receiverUrl . '/hooks',
+            ['order.created'],
+        );
+
+        $delivery = new WebhookDelivery($event, $endpoint);
+        $outbox = new OutboxMessage($delivery);
+
+        $entityManager->persist($event);
+        $entityManager->persist($endpoint);
+        $entityManager->persist($delivery);
+        $entityManager->persist($outbox);
+        $entityManager->flush();
+
+        $deliveryId = $delivery->getId();
+        $eventId = $event->getId();
+
+        self::assertSame(
+            204,
+            $httpClient->request(
+                'POST',
+                $receiverUrl . '/__test/configure',
+                [
+                    'json' => [
+                        'secret' => $endpoint->getSigningSecret(),
+                        'failuresBeforeSuccess' => 1,
+                    ],
+                ],
+            )->getStatusCode(),
+        );
+
+        $queueName = 'eventflow_https_retry_'
+            . bin2hex(random_bytes(8));
+
+        $transport = new AmqpTransport(
+            Connection::fromDsn($dsn, [
+                'confirm_timeout' => 5,
+                'connect_timeout' => 5,
+                'exchange' => [
+                    'name' => $queueName,
+                ],
+                'queues' => [
+                    $queueName => [],
+                ],
+            ]),
+        );
+
+        $transport->setup();
+
+        try {
+            $container->set(
+                'messenger.transport.rabbitmq',
+                $transport,
+            );
+
+            self::assertSame(
+                $transport,
+                $container->get('messenger.transport.rabbitmq'),
+            );
+
+            $publisher = new OutboxPublisher(
+                $entityManager,
+                $transport,
+            );
+
+            self::assertSame(
+                [
+                    'processed' => 1,
+                    'published' => 1,
+                    'failed' => 0,
+                ],
+                $publisher->publish(1),
+            );
+
+            self::assertSame(
+                1,
+                $transport->getMessageCount(),
+            );
+
+            $container->set(
+                DeliverWebhookHandler::class,
+                new DeliverWebhookHandler(
+                    $entityManager,
+                    $httpClient,
+                    new WebhookSigner(),
+                ),
+            );
+
+            $dispatcher = $container->get(
+                'event_dispatcher',
+            );
+
+            $bus = $container->get(
+                MessageBusInterface::class,
+            );
+
+            $firstWorker = new Worker(
+                ['rabbitmq' => $transport],
+                $bus,
+                $dispatcher,
+            );
+
+            $retryEvents = 0;
+
+            $dispatcher->addListener(
+                WorkerMessageRetriedEvent::class,
+                static function () use (
+                    &$retryEvents,
+                    $firstWorker,
+                ): void {
+                    ++$retryEvents;
+                    $firstWorker->stop();
+                },
+            );
+
+            $firstWorker->run([
+                'time_limit' => 15,
+                'sleep' => 10000,
+            ]);
+
+            self::assertSame(
+                1,
+                $retryEvents,
+                'Messenger did not schedule a retry.',
+            );
+
+            $entityManager->clear();
+
+            $failedDelivery = $entityManager->find(
+                WebhookDelivery::class,
+                $deliveryId,
+            );
+
+            self::assertNotNull($failedDelivery);
+
+            self::assertSame(
+                'pending',
+                $failedDelivery->getStatus(),
+            );
+
+            self::assertSame(
+                1,
+                $failedDelivery->getAttempts(),
+            );
+
+            self::assertStringContainsString(
+                'HTTP 503',
+                (string) $failedDelivery->getLastError(),
+            );
+
+            $firstState = $httpClient->request(
+                'GET',
+                $receiverUrl . '/__test/received',
+            )->toArray();
+
+            self::assertSame(
+                1,
+                $firstState['verifiedAttempts'],
+            );
+
+            self::assertSame(0, $firstState['count']);
+
+            $retryAvailable = false;
+
+            for ($attempt = 0; $attempt < 50; ++$attempt) {
+                if ($transport->getMessageCount() === 1) {
+                    $retryAvailable = true;
+                    break;
+                }
+
+                usleep(200_000);
+            }
+
+            self::assertTrue(
+                $retryAvailable,
+                'Retry never returned to the real RabbitMQ queue.',
+            );
+
+            $secondWorker = new Worker(
+                ['rabbitmq' => $transport],
+                $bus,
+                $dispatcher,
+            );
+
+            $handledEvents = 0;
+
+            $dispatcher->addListener(
+                WorkerMessageHandledEvent::class,
+                static function () use (
+                    &$handledEvents,
+                    $secondWorker,
+                ): void {
+                    ++$handledEvents;
+                    $secondWorker->stop();
+                },
+            );
+
+            $secondWorker->run([
+                'time_limit' => 15,
+                'sleep' => 10000,
+            ]);
+
+            self::assertSame(1, $handledEvents);
+
+            self::assertSame(
+                0,
+                $transport->getMessageCount(),
+            );
+
+            $entityManager->clear();
+
+            $savedDelivery = $entityManager->find(
+                WebhookDelivery::class,
+                $deliveryId,
+            );
+
+            self::assertNotNull($savedDelivery);
+
+            self::assertSame(
+                'delivered',
+                $savedDelivery->getStatus(),
+            );
+
+            self::assertSame(
+                2,
+                $savedDelivery->getAttempts(),
+            );
+
+            self::assertNotNull(
+                $savedDelivery->getDeliveredAt(),
+            );
+
+            self::assertNull(
+                $savedDelivery->getLastError(),
+            );
+
+            $finalState = $httpClient->request(
+                'GET',
+                $receiverUrl . '/__test/received',
+            )->toArray();
+
+            self::assertSame(
+                2,
+                $finalState['verifiedAttempts'],
+            );
+
+            self::assertSame(1, $finalState['count']);
+
+            self::assertSame(
+                $deliveryId,
+                $finalState['deliveries'][0]['id'],
+            );
+
+            self::assertSame(
+                $eventId,
+                $finalState['deliveries'][0]['payload']['id'],
+            );
+        } finally {
+            $transport->close();
+
+            self::deleteTemporaryQueue(
+                $dsn,
+                $queueName,
+            );
+        }
+    }
     private static function deleteTemporaryQueue(
         string $dsn,
         string $queueName,
