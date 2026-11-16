@@ -10,6 +10,7 @@ use App\Entity\WebhookEndpoint;
 use App\EventListener\WebhookDeliveryFailedListener;
 use App\Message\DeliverWebhookMessage;
 use App\MessageHandler\DeliverWebhookHandler;
+use App\Service\WebhookSigner;
 use Doctrine\ORM\EntityManagerInterface;
 use RuntimeException;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -80,6 +81,7 @@ final class WebhookTerminalStateTest extends KernelTestCase
         $handler = new DeliverWebhookHandler(
             $entityManager,
             $httpClient,
+            new WebhookSigner(),
         );
 
         $handler($message);
@@ -134,6 +136,7 @@ final class WebhookTerminalStateTest extends KernelTestCase
         $handler = new DeliverWebhookHandler(
             $entityManager,
             $httpClient,
+            new WebhookSigner(),
         );
 
         $message = new DeliverWebhookMessage(

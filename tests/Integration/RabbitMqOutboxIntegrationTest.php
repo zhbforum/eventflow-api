@@ -9,6 +9,7 @@ use App\Entity\OutboxMessage;
 use App\Entity\WebhookDelivery;
 use App\Entity\WebhookEndpoint;
 use App\MessageHandler\DeliverWebhookHandler;
+use App\Service\WebhookSigner;
 use App\Service\OutboxPublisher;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -151,6 +152,7 @@ final class RabbitMqOutboxIntegrationTest extends KernelTestCase
                 new DeliverWebhookHandler(
                     $entityManager,
                     $httpClient,
+                    new WebhookSigner(),
                 ),
             );
 

@@ -28,6 +28,9 @@ final class WebhookEndpoint
     #[ORM\Column(type: Types::BOOLEAN)]
     private bool $isActive;
 
+    #[ORM\Column(type: Types::STRING, length: 64)]
+    private string $signingSecret;
+
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
     private DateTimeImmutable $createdAt;
 
@@ -42,6 +45,7 @@ final class WebhookEndpoint
         $this->url = $url;
         $this->subscribedEvents = $subscribedEvents;
         $this->isActive = true;
+        $this->signingSecret = bin2hex(random_bytes(32));
         $this->createdAt = new DateTimeImmutable(
             'now',
             new DateTimeZone('UTC'),
@@ -72,6 +76,18 @@ final class WebhookEndpoint
     public function getCreatedAt(): DateTimeImmutable
     {
         return $this->createdAt;
+    }
+
+    public function getSigningSecret(): string
+    {
+        return $this->signingSecret;
+    }
+
+    public function rotateSigningSecret(): string
+    {
+        $this->signingSecret = bin2hex(random_bytes(32));
+
+        return $this->signingSecret;
     }
 
     public function update(

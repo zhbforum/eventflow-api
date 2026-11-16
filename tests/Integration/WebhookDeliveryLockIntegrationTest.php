@@ -9,6 +9,7 @@ use App\Entity\WebhookDelivery;
 use App\Entity\WebhookEndpoint;
 use App\Message\DeliverWebhookMessage;
 use App\MessageHandler\DeliverWebhookHandler;
+use App\Service\WebhookSigner;
 use Doctrine\DBAL\DriverManager;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -118,6 +119,7 @@ final class WebhookDeliveryLockIntegrationTest extends KernelTestCase
         $handler = new DeliverWebhookHandler(
             $entityManager,
             $httpClient,
+            new WebhookSigner(),
         );
 
         $message = new DeliverWebhookMessage(

@@ -6,6 +6,7 @@ namespace App\MessageHandler;
 
 use App\Entity\WebhookDelivery;
 use App\Message\DeliverWebhookMessage;
+use App\Service\WebhookSigner;
 use Doctrine\ORM\EntityManagerInterface;
 use RuntimeException;
 use Symfony\Component\Messenger\Attribute\AsMessageHandler;
@@ -19,6 +20,7 @@ final readonly class DeliverWebhookHandler
     public function __construct(
         private EntityManagerInterface $entityManager,
         private HttpClientInterface $httpClient,
+        private WebhookSigner $webhookSigner,
     ) {}
 
     public function __invoke(DeliverWebhookMessage $message): void
@@ -98,22 +100,38 @@ final readonly class DeliverWebhookHandler
         $event = $delivery->getEvent();
 
         try {
+            $body = json_encode(
+                [
+                    'id' => $event->getId(),
+                    'type' => $event->getType(),
+                    'source' => $event->getSource(),
+                    'payload' => $event->getPayload(),
+                    'createdAt' => $event
+                        ->getCreatedAt()
+                        ->format(DATE_ATOM),
+                ],
+                JSON_THROW_ON_ERROR,
+            );
+
+            $timestamp = time();
+
+            $signature = $this->webhookSigner->sign(
+                $body,
+                $delivery->getId(),
+                $timestamp,
+                $endpoint->getSigningSecret(),
+            );
+
             $response = $this->httpClient->request(
                 'POST',
                 $url,
                 [
-                    'json' => [
-                        'id' => $event->getId(),
-                        'type' => $event->getType(),
-                        'source' => $event->getSource(),
-                        'payload' => $event->getPayload(),
-                        'createdAt' => $event
-                            ->getCreatedAt()
-                            ->format(DATE_ATOM),
-                    ],
+                    'body' => $body,
                     'headers' => [
-                        'X-EventFlow-Delivery-Id' =>
-                        $delivery->getId(),
+                        'Content-Type' => 'application/json',
+                        'X-EventFlow-Delivery-Id' => $delivery->getId(),
+                        'X-EventFlow-Timestamp' => (string) $timestamp,
+                        'X-EventFlow-Signature' => $signature,
                     ],
                     'timeout' => 5,
                     'max_duration' => 10,

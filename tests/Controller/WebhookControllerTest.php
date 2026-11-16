@@ -53,6 +53,19 @@ final class WebhookControllerTest extends WebTestCase
             '/api/v1/webhooks/' . $data['id'],
             $client->getResponse()->headers->get('Location'),
         );
+
+        self::assertArrayHasKey('signingSecret', $data);
+
+        self::assertMatchesRegularExpression(
+            '/^[a-f0-9]{64}$/D',
+            $data['signingSecret'],
+        );
+
+        self::assertTrue(
+            $client->getResponse()
+                ->headers
+                ->hasCacheControlDirective('no-store'),
+        );
     }
 
     public function testRetrieveWebhook(): void
@@ -96,6 +109,19 @@ final class WebhookControllerTest extends WebTestCase
             512,
             JSON_THROW_ON_ERROR,
         );
+
+
+        self::assertArrayHasKey(
+            'signingSecret',
+            $created,
+        );
+
+        self::assertArrayNotHasKey(
+            'signingSecret',
+            $retrieved,
+        );
+
+        unset($created['signingSecret']);
 
         self::assertSame($created, $retrieved);
     }

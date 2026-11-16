@@ -33,10 +33,17 @@ final class WebhookController
         $entityManager->persist($endpoint);
         $entityManager->flush();
 
+
         return new JsonResponse(
-            self::toArray($endpoint),
+            [
+                ...self::toArray($endpoint),
+                'signingSecret' => $endpoint->getSigningSecret(),
+            ],
             Response::HTTP_CREATED,
-            ['Location' => '/api/v1/webhooks/' . $endpoint->getId()],
+            [
+                'Location' => '/api/v1/webhooks/' . $endpoint->getId(),
+                'Cache-Control' => 'no-store',
+            ],
         );
     }
 

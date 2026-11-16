@@ -85,6 +85,11 @@ final class WebhookListControllerTest extends WebTestCase
         );
 
         self::assertCount(1, $first['items']);
+
+        self::assertArrayNotHasKey(
+            'signingSecret',
+            $first['items'][0],
+        );
         self::assertTrue($first['items'][0]['isActive']);
         self::assertArrayHasKey('subscribedEvents', $first['items'][0]);
 
@@ -106,6 +111,10 @@ final class WebhookListControllerTest extends WebTestCase
         );
 
         self::assertCount(1, $second['items']);
+        self::assertArrayNotHasKey(
+            'signingSecret',
+            $second['items'][0],
+        );
         self::assertNotSame(
             $first['items'][0]['id'],
             $second['items'][0]['id'],
