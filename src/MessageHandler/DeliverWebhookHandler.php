@@ -60,6 +60,14 @@ final readonly class DeliverWebhookHandler
 
         $this->entityManager->refresh($delivery);
 
+        if (
+            $message->replayGeneration
+            !== $delivery->getReplayGeneration()
+        ) {
+            // Ignore messages from an earlier delivery generation.
+            return;
+        }
+
         if (in_array(
             $delivery->getStatus(),
             ['delivered', 'failed'],

@@ -60,6 +60,14 @@ final readonly class WebhookDeliveryFailedListener
 
             $this->entityManager->refresh($delivery);
 
+            if (
+                $message->replayGeneration
+                !== $delivery->getReplayGeneration()
+            ) {
+                // Stale failures must not affect a newer replay.
+                return;
+            }
+
             if (in_array(
                 $delivery->getStatus(),
                 ['delivered', 'failed'],

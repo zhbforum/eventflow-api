@@ -95,6 +95,7 @@ final readonly class OutboxPublisher
                                     $outbox
                                         ->getDelivery()
                                         ->getId(),
+                                    $outbox->getReplayGeneration(),
                                 ),
                             ),
                         );

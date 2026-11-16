@@ -8,5 +8,6 @@ final readonly class DeliverWebhookMessage
 {
     public function __construct(
         public string $deliveryId,
+        public int $replayGeneration = 0,
     ) {}
 }
