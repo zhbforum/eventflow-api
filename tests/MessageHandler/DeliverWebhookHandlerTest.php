@@ -9,6 +9,7 @@ use App\Entity\WebhookDelivery;
 use App\Entity\WebhookEndpoint;
 use App\Message\DeliverWebhookMessage;
 use App\MessageHandler\DeliverWebhookHandler;
+use App\Service\WebhookSigner;
 use Doctrine\ORM\EntityManagerInterface;
 use RuntimeException;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -38,7 +39,12 @@ final class DeliverWebhookHandlerTest extends KernelTestCase
             },
         );
 
-        $handler = new DeliverWebhookHandler($em, $httpClient);
+        $handler = new DeliverWebhookHandler(
+            $em,
+            $httpClient,
+            new WebhookSigner(),
+        );
+
         $message = new DeliverWebhookMessage($delivery->getId());
 
         $handler($message);
@@ -64,10 +70,15 @@ final class DeliverWebhookHandlerTest extends KernelTestCase
             new MockResponse('', ['http_code' => 503]),
         ]);
 
-        $handler = new DeliverWebhookHandler($em, $httpClient);
+        $handler = new DeliverWebhookHandler(
+            $em,
+            $httpClient,
+            new WebhookSigner(),
+        );
 
         try {
             $handler(new DeliverWebhookMessage($delivery->getId()));
+
             self::fail('Expected HTTP delivery failure');
         } catch (RuntimeException $exception) {
             self::assertSame(
@@ -78,11 +89,182 @@ final class DeliverWebhookHandlerTest extends KernelTestCase
 
         self::assertSame('pending', $delivery->getStatus());
         self::assertSame(1, $delivery->getAttempts());
+
         self::assertSame(
             'Webhook returned HTTP 503',
             $delivery->getLastError(),
         );
+
         self::assertNull($delivery->getDeliveredAt());
+    }
+
+    public function testDeliveryIncludesValidHmacSignature(): void
+    {
+        self::bootKernel();
+
+        $em = self::getContainer()
+            ->get(EntityManagerInterface::class);
+
+        $delivery = self::createDelivery($em);
+
+        $mockResponse = new MockResponse(
+            '',
+            ['http_code' => 204],
+        );
+
+        $httpClient = new MockHttpClient($mockResponse);
+
+        $handler = new DeliverWebhookHandler(
+            $em,
+            $httpClient,
+            new WebhookSigner(),
+        );
+
+        $handler(
+            new DeliverWebhookMessage($delivery->getId()),
+        );
+
+        self::assertSame(
+            'POST',
+            $mockResponse->getRequestMethod(),
+        );
+
+        self::assertSame(
+            'https://example.com/hooks',
+            $mockResponse->getRequestUrl(),
+        );
+
+        $options = $mockResponse->getRequestOptions();
+
+        $body = $options['body'];
+
+        self::assertIsString($body);
+
+        $payload = json_decode(
+            $body,
+            true,
+            512,
+            JSON_THROW_ON_ERROR,
+        );
+
+        self::assertSame(
+            $delivery->getEvent()->getId(),
+            $payload['id'],
+        );
+
+        $headers = [];
+
+        foreach ($options['headers'] as $header) {
+            [$name, $value] = explode(':', $header, 2);
+
+            $headers[strtolower(trim($name))] = trim($value);
+        }
+
+        self::assertSame(
+            'application/json',
+            $headers['content-type'] ?? null,
+        );
+
+        self::assertSame(
+            $delivery->getId(),
+            $headers['x-eventflow-delivery-id'] ?? null,
+        );
+
+        $timestamp = $headers['x-eventflow-timestamp'] ?? null;
+
+        self::assertNotNull($timestamp);
+
+        self::assertMatchesRegularExpression(
+            '/^[1-9][0-9]*$/D',
+            $timestamp,
+        );
+
+        self::assertLessThanOrEqual(
+            30,
+            abs(time() - (int) $timestamp),
+        );
+
+        $expectedSignature = 'v1=' . hash_hmac(
+            'sha256',
+            sprintf(
+                'v1.%s.%s.%s',
+                $timestamp,
+                $delivery->getId(),
+                $body,
+            ),
+            $delivery->getEndpoint()->getSigningSecret(),
+        );
+
+        self::assertSame(
+            $expectedSignature,
+            $headers['x-eventflow-signature'] ?? null,
+        );
+
+        self::assertSame(
+            'delivered',
+            $delivery->getStatus(),
+        );
+    }
+
+    public function testRedirectIsNotFollowed(): void
+    {
+        self::bootKernel();
+
+        $em = self::getContainer()
+            ->get(EntityManagerInterface::class);
+
+        $delivery = self::createDelivery($em);
+        $requests = 0;
+
+        $httpClient = new MockHttpClient(
+            function (
+                string $method,
+                string $url,
+                array $options,
+            ) use (&$requests): MockResponse {
+                ++$requests;
+
+                self::assertSame('POST', $method);
+
+                self::assertSame(
+                    'https://example.com/hooks',
+                    $url,
+                );
+
+                self::assertSame(
+                    0,
+                    $options['max_redirects'],
+                );
+
+                return new MockResponse('', [
+                    'http_code' => 302,
+                    'response_headers' => [
+                        'Location: https://127.0.0.1/private',
+                    ],
+                ]);
+            },
+        );
+
+        $handler = new DeliverWebhookHandler(
+            $em,
+            $httpClient,
+            new WebhookSigner(),
+        );
+
+        try {
+            $handler(new DeliverWebhookMessage($delivery->getId()));
+
+            self::fail('Expected redirect rejection');
+        } catch (RuntimeException $exception) {
+            self::assertSame(
+                'Webhook returned HTTP 302',
+                $exception->getMessage(),
+            );
+        }
+
+        self::assertSame(1, $requests);
+        self::assertSame('pending', $delivery->getStatus());
+        self::assertSame(1, $delivery->getAttempts());
     }
 
     private static function createDelivery(
@@ -107,58 +289,5 @@ final class DeliverWebhookHandlerTest extends KernelTestCase
         $em->flush();
 
         return $delivery;
-    }
-
-
-    public function testRedirectIsNotFollowed(): void
-    {
-        self::bootKernel();
-
-        $em = self::getContainer()
-            ->get(EntityManagerInterface::class);
-
-        $delivery = self::createDelivery($em);
-        $requests = 0;
-
-        $httpClient = new MockHttpClient(
-            function (
-                string $method,
-                string $url,
-                array $options,
-            ) use (&$requests): MockResponse {
-                ++$requests;
-
-                self::assertSame('POST', $method);
-                self::assertSame(
-                    'https://example.com/hooks',
-                    $url,
-                );
-                self::assertSame(0, $options['max_redirects']);
-
-                return new MockResponse('', [
-                    'http_code' => 302,
-                    'response_headers' => [
-                        'Location: https://127.0.0.1/private',
-                    ],
-                ]);
-            },
-        );
-
-        $handler = new DeliverWebhookHandler($em, $httpClient);
-
-        try {
-            $handler(new DeliverWebhookMessage($delivery->getId()));
-
-            self::fail('Expected redirect rejection');
-        } catch (RuntimeException $exception) {
-            self::assertSame(
-                'Webhook returned HTTP 302',
-                $exception->getMessage(),
-            );
-        }
-
-        self::assertSame(1, $requests);
-        self::assertSame('pending', $delivery->getStatus());
-        self::assertSame(1, $delivery->getAttempts());
     }
 }

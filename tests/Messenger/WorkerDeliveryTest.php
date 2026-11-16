@@ -9,6 +9,7 @@ use App\Entity\WebhookDelivery;
 use App\Entity\WebhookEndpoint;
 use App\Message\DeliverWebhookMessage;
 use App\MessageHandler\DeliverWebhookHandler;
+use App\Service\WebhookSigner;
 use Doctrine\ORM\EntityManagerInterface;
 use PHPUnit\Framework\Attributes\DataProvider;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -89,6 +90,7 @@ final class WorkerDeliveryTest extends KernelTestCase
             new DeliverWebhookHandler(
                 $entityManager,
                 $mockHttpClient,
+                new WebhookSigner(),
             ),
         );
 

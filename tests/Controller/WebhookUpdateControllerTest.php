@@ -43,6 +43,8 @@ final class WebhookUpdateControllerTest extends WebTestCase
         $entityManager->persist($webhook);
         $entityManager->flush();
 
+        $originalSecret = $webhook->getSigningSecret();
+
         $client->jsonRequest(
             'PATCH',
             '/api/v1/webhooks/' . $webhook->getId(),
@@ -63,22 +65,35 @@ final class WebhookUpdateControllerTest extends WebTestCase
             JSON_THROW_ON_ERROR,
         );
 
+        self::assertArrayNotHasKey(
+            'signingSecret',
+            $data,
+        );
+
         self::assertSame(
             'https://example.com/new',
             $data['url'],
         );
+
         self::assertSame(
             ['order.updated'],
             $data['subscribedEvents'],
         );
+
         self::assertFalse($data['isActive']);
 
         $entityManager->refresh($webhook);
 
         self::assertSame(
+            $originalSecret,
+            $webhook->getSigningSecret(),
+        );
+
+        self::assertSame(
             'https://example.com/new',
             $webhook->getUrl(),
         );
+
         self::assertFalse($webhook->isActive());
     }
 
@@ -109,10 +124,12 @@ final class WebhookUpdateControllerTest extends WebTestCase
         $entityManager->refresh($webhook);
 
         self::assertFalse($webhook->isActive());
+
         self::assertSame(
             'https://example.com/original',
             $webhook->getUrl(),
         );
+
         self::assertSame(
             ['order.created'],
             $webhook->getSubscribedEvents(),
@@ -164,7 +181,9 @@ final class WebhookUpdateControllerTest extends WebTestCase
             ->find($webhook->getId());
 
         self::assertNotNull($reloadedWebhook);
+
         self::assertTrue($reloadedWebhook->isActive());
+
         self::assertSame(
             'https://example.com/webhook',
             $reloadedWebhook->getUrl(),
