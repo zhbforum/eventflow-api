@@ -110,6 +110,32 @@ jobs:
             --display-phpunit-notices \
             --fail-on-phpunit-notice
 
+      - name: Run real HTTPS webhook delivery integration
+        run: |
+          docker compose \
+            -f compose.yml \
+            -f compose.workers.yml \
+            -f compose.https-e2e.yml \
+            config --quiet
+
+          docker compose \
+            -f compose.yml \
+            -f compose.workers.yml \
+            -f compose.https-e2e.yml \
+            up -d --wait webhook-receiver
+
+          docker compose \
+            -f compose.yml \
+            -f compose.workers.yml \
+            -f compose.https-e2e.yml \
+            run --rm \
+            -e APP_ENV=test \
+            -e RUN_HTTPS_E2E_INTEGRATION=1 \
+            app php bin/phpunit \
+            tests/Integration/RealHttpsWebhookDeliveryIntegrationTest.php \
+            --display-phpunit-notices \
+            --fail-on-phpunit-notice
+
       - name: Validate worker command configuration
         run: |
           docker compose \
