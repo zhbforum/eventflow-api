@@ -10,6 +10,7 @@ use App\Entity\WebhookDelivery;
 use App\Entity\WebhookEndpoint;
 use App\MessageHandler\DeliverWebhookHandler;
 use App\Service\WebhookSigner;
+use App\Tests\Fixtures\TestWebhookReceiver;
 use App\Service\OutboxPublisher;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Test\KernelTestCase;
@@ -126,12 +127,21 @@ final class RabbitMqOutboxIntegrationTest extends KernelTestCase
             );
 
             $requestCount = 0;
+            $receiver = new TestWebhookReceiver(
+                $endpoint->getSigningSecret(),
+            );
 
             $httpClient = new MockHttpClient(
                 static function (
                     string $method,
                     string $url,
-                ) use (&$requestCount): MockResponse {
+                    array $options,
+                ) use (
+                    &$requestCount,
+                    $event,
+                    $deliveryId,
+                    $receiver,
+                ): MockResponse {
                     ++$requestCount;
 
                     self::assertSame('POST', $method);
@@ -139,6 +149,95 @@ final class RabbitMqOutboxIntegrationTest extends KernelTestCase
                     self::assertSame(
                         'https://example.com/integration-test',
                         $url,
+                    );
+
+                    $body = $options['body'] ?? null;
+
+                    self::assertIsString($body);
+
+                    $payload = json_decode(
+                        $body,
+                        true,
+                        512,
+                        JSON_THROW_ON_ERROR,
+                    );
+
+                    self::assertSame(
+                        $event->getId(),
+                        $payload['id'] ?? null,
+                    );
+
+                    self::assertSame(
+                        'order.created',
+                        $payload['type'] ?? null,
+                    );
+
+                    self::assertSame(
+                        'ORD-RABBITMQ-001',
+                        $payload['payload']['orderId'] ?? null,
+                    );
+
+                    $headers = [];
+
+                    foreach ($options['headers'] ?? [] as $header) {
+                        self::assertIsString($header);
+
+                        [$name, $value] = explode(
+                            ':',
+                            $header,
+                            2,
+                        );
+
+                        $headers[strtolower(trim($name))] =
+                            trim($value);
+                    }
+
+                    self::assertSame(
+                        'application/json',
+                        $headers['content-type'] ?? null,
+                    );
+
+                    self::assertSame(
+                        $deliveryId,
+                        $headers['x-eventflow-delivery-id']
+                            ?? null,
+                    );
+
+                    $timestamp =
+                        $headers['x-eventflow-timestamp']
+                        ?? null;
+
+                    self::assertIsString($timestamp);
+
+                    self::assertMatchesRegularExpression(
+                        '/^[1-9][0-9]*$/D',
+                        $timestamp,
+                    );
+
+                    self::assertLessThanOrEqual(
+                        300,
+                        abs(time() - (int) $timestamp),
+                    );
+
+                    $signature =
+                        $headers['x-eventflow-signature']
+                        ?? null;
+
+                    self::assertIsString($signature);
+
+                    self::assertMatchesRegularExpression(
+                        '/^v1=[a-f0-9]{64}$/D',
+                        $signature,
+                    );
+
+                    // Validate the signed request independently.
+                    self::assertTrue(
+                        $receiver->accepts(
+                            $body,
+                            $headers,
+                            time(),
+                        ),
+                        'Test receiver rejected webhook HMAC.',
                     );
 
                     return new MockResponse('', [
