@@ -6,37 +6,136 @@ namespace App\Controller;
 
 use App\Dto\CreateEventRequest;
 use App\Entity\Event;
+use App\Exception\IdempotencyConflictException;
 use App\Service\EventPublisher;
+use App\Service\EventRequestFingerprint;
+use App\Security\OidcUser;
+use LogicException;
+use Symfony\Bundle\SecurityBundle\Security;
 use Doctrine\ORM\EntityManagerInterface;
+use InvalidArgumentException;
 use Symfony\Component\HttpFoundation\JsonResponse;
+use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
 use Symfony\Component\HttpKernel\Attribute\MapRequestPayload;
 use Symfony\Component\Routing\Attribute\Route;
 
 final class EventController
 {
-    #[Route('/api/v1/events', name: 'api_events_create', methods: ['POST'], format: 'json')]
+    #[Route(
+        '/api/v1/events',
+        name: 'api_events_create',
+        methods: ['POST'],
+        format: 'json',
+    )]
     public function create(
         #[MapRequestPayload(acceptFormat: 'json')]
         CreateEventRequest $request,
+        Request $httpRequest,
         EventPublisher $eventPublisher,
+        Security $security,
     ): JsonResponse {
-        $event = new Event(
-            $request->type,
-            $request->source,
-            $request->payload,
+        try {
+            $payload = EventRequestFingerprint::payloadFromJson(
+                $httpRequest->getContent(),
+            );
+        } catch (InvalidArgumentException $exception) {
+            return new JsonResponse(
+                ['error' => $exception->getMessage()],
+                Response::HTTP_BAD_REQUEST,
+                ['Cache-Control' => 'no-store'],
+            );
+        }
+
+        if (!$httpRequest->headers->has('Idempotency-Key')) {
+            $event = new Event(
+                $request->type,
+                $request->source,
+                $payload,
+            );
+
+            $eventPublisher->publish($event);
+
+            return new JsonResponse(
+                self::toArray($event),
+                Response::HTTP_CREATED,
+                [
+                    'Location' => '/api/v1/events/' . $event->getId(),
+                    'Cache-Control' => 'no-store',
+                ],
+            );
+        }
+
+        $key = $httpRequest->headers->get(
+            'Idempotency-Key',
+            '',
         );
 
-        $eventPublisher->publish($event);
+        $scope = 'management-token';
+
+        if ($httpRequest->headers->get('Authorization', '') === '') {
+            $user = $security->getUser();
+
+            if (!$user instanceof OidcUser) {
+                throw new LogicException(
+                    'Authenticated principal is missing.',
+                );
+            }
+
+            $scope = 'oidc:' . $user->getUserIdentifier();
+        }
+
+        try {
+            $result = $eventPublisher->publishIdempotent(
+                $request->type,
+                $request->source,
+                $payload,
+                $key,
+                $httpRequest->getContent(),
+                $scope,
+            );
+        } catch (InvalidArgumentException $exception) {
+            return new JsonResponse(
+                ['error' => $exception->getMessage()],
+                Response::HTTP_BAD_REQUEST,
+                ['Cache-Control' => 'no-store'],
+            );
+        } catch (IdempotencyConflictException) {
+            return new JsonResponse(
+                [
+                    'error' =>
+                        'Idempotency-Key was already used '
+                        . 'with a different request.',
+                ],
+                Response::HTTP_CONFLICT,
+                ['Cache-Control' => 'no-store'],
+            );
+        }
+
+        $event = $result->event;
+
+        $headers = [
+            'Location' => '/api/v1/events/' . $event->getId(),
+            'Cache-Control' => 'no-store',
+        ];
+
+        if ($result->replayed) {
+            $headers['Idempotency-Replayed'] = 'true';
+        }
 
         return new JsonResponse(
             self::toArray($event),
             Response::HTTP_CREATED,
-            ['Location' => '/api/v1/events/' . $event->getId()],
+            $headers,
         );
     }
 
-    #[Route('/api/v1/events/{id}', name: 'api_events_show', methods: ['GET'], format: 'json')]
+    #[Route(
+        '/api/v1/events/{id}',
+        name: 'api_events_show',
+        methods: ['GET'],
+        format: 'json',
+    )]
     public function show(
         string $id,
         EntityManagerInterface $entityManager,
@@ -62,7 +161,9 @@ final class EventController
             'type' => $event->getType(),
             'source' => $event->getSource(),
             'payload' => $event->getPayload(),
-            'createdAt' => $event->getCreatedAt()->format(DATE_ATOM),
+            'createdAt' => $event
+                ->getCreatedAt()
+                ->format(DATE_ATOM),
         ];
     }
 }
