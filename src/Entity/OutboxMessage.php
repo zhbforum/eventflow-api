@@ -13,8 +13,8 @@ use Symfony\Component\Uid\Uuid;
 #[ORM\Entity]
 #[ORM\Table(name: 'outbox_messages')]
 #[ORM\UniqueConstraint(
-    name: 'uniq_outbox_delivery',
-    columns: ['delivery_id'],
+    name: 'uniq_outbox_delivery_generation',
+    columns: ['delivery_id', 'replay_generation'],
 )]
 final class OutboxMessage
 {
@@ -35,6 +35,9 @@ final class OutboxMessage
     #[ORM\Column(type: Types::INTEGER)]
     private int $publishAttempts = 0;
 
+    #[ORM\Column(type: Types::INTEGER, options: ['default' => 0])]
+    private int $replayGeneration = 0;
+
     #[ORM\Column(type: Types::TEXT, nullable: true)]
     private ?string $lastError = null;
 
@@ -42,6 +45,7 @@ final class OutboxMessage
     {
         $this->id = Uuid::v7()->toRfc4122();
         $this->delivery = $delivery;
+        $this->replayGeneration = $delivery->getReplayGeneration();
         $this->createdAt = new DateTimeImmutable(
             'now',
             new DateTimeZone('UTC'),
@@ -66,6 +70,11 @@ final class OutboxMessage
     public function getPublishedAt(): ?DateTimeImmutable
     {
         return $this->publishedAt;
+    }
+
+    public function getReplayGeneration(): int
+    {
+        return $this->replayGeneration;
     }
 
     public function getPublishAttempts(): int

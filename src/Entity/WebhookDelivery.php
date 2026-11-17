@@ -9,6 +9,7 @@ use DateTimeZone;
 use Doctrine\DBAL\Types\Types;
 use Doctrine\ORM\Mapping as ORM;
 use Symfony\Component\Uid\Uuid;
+use LogicException;
 
 #[ORM\Entity]
 #[ORM\Table(name: 'webhook_deliveries')]
@@ -35,6 +36,9 @@ final class WebhookDelivery
 
     #[ORM\Column(type: Types::INTEGER)]
     private int $attempts = 0;
+
+    #[ORM\Column(type: Types::INTEGER, options: ['default' => 0])]
+    private int $replayGeneration = 0;
 
     #[ORM\Column(type: Types::DATETIME_IMMUTABLE)]
     private DateTimeImmutable $createdAt;
@@ -83,6 +87,11 @@ final class WebhookDelivery
         return $this->attempts;
     }
 
+    public function getReplayGeneration(): int
+    {
+        return $this->replayGeneration;
+    }
+
     public function getCreatedAt(): DateTimeImmutable
     {
         return $this->createdAt;
@@ -98,6 +107,22 @@ final class WebhookDelivery
         return $this->lastError;
     }
 
+
+    public function requestReplay(): int
+    {
+        if ($this->status !== 'failed') {
+            throw new LogicException(
+                'Only failed webhook deliveries can be replayed.',
+            );
+        }
+
+        ++$this->replayGeneration;
+        $this->status = 'pending';
+        $this->lastError = null;
+        $this->deliveredAt = null;
+
+        return $this->replayGeneration;
+    }
 
     public function startAttempt(): void
     {
