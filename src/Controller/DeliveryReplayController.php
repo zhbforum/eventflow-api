@@ -44,6 +44,10 @@ final readonly class DeliveryReplayController
             );
         }
 
+        $organizationId = $request->attributes->getString(
+            'eventflow.organization_id',
+        );
+
         $requestedBy = 'management-token';
 
         if ($request->headers->get('Authorization', '') === '') {
@@ -68,6 +72,7 @@ final readonly class DeliveryReplayController
             $replay = $replayService->requestReplay(
                 $id,
                 $requestedBy,
+                $organizationId,
             );
         } catch (LogicException) {
             return new JsonResponse(
@@ -90,7 +95,7 @@ final readonly class DeliveryReplayController
                 'replayId' => $replay->getId(),
                 'deliveryId' => $id,
                 'replayGeneration' =>
-                    $replay->getReplayGeneration(),
+                $replay->getReplayGeneration(),
                 'status' => 'pending',
                 'requestedAt' => $replay
                     ->getRequestedAt()

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Security;
 
+use App\Entity\Organization;
 use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\HttpFoundation\JsonResponse;
@@ -19,6 +20,7 @@ final readonly class ManagementApiGuard
         private ?string $token,
         private Security $security,
         private CsrfTokenManagerInterface $csrfTokenManager,
+        private OrganizationMembershipResolver $membershipResolver,
     ) {}
 
     public function check(Request $request): ?JsonResponse
@@ -29,7 +31,7 @@ final readonly class ManagementApiGuard
         );
 
         if ($authorization !== '') {
-            return $this->checkBearer($authorization);
+            return $this->checkBearer($request, $authorization);
         }
 
         $user = $this->security->getUser();
@@ -45,8 +47,10 @@ final readonly class ManagementApiGuard
         return self::deny('Forbidden', Response::HTTP_FORBIDDEN);
     }
 
-    private function checkBearer(string $authorization): ?JsonResponse
-    {
+    private function checkBearer(
+        Request $request,
+        string $authorization,
+    ): ?JsonResponse {
         if ($this->token === null || $this->token === '') {
             return self::deny('Not found', Response::HTTP_NOT_FOUND);
         }
@@ -63,6 +67,22 @@ final readonly class ManagementApiGuard
             return self::deny('Forbidden', Response::HTTP_FORBIDDEN);
         }
 
+        $organizationId = $request->headers->get(
+            'X-Organization-Id',
+        );
+
+        if (
+            $organizationId !== null
+            && $organizationId !== Organization::LEGACY_ID
+        ) {
+            return self::deny('Forbidden', Response::HTTP_FORBIDDEN);
+        }
+
+        $request->attributes->set(
+            'eventflow.organization_id',
+            Organization::LEGACY_ID,
+        );
+
         return null;
     }
 
@@ -70,26 +90,51 @@ final readonly class ManagementApiGuard
         Request $request,
         OidcUser $user,
     ): ?JsonResponse {
+        $organizationId = $request->headers->get(
+            'X-Organization-Id',
+        );
+
+        if ($organizationId === null || $organizationId === '') {
+            return self::deny('Forbidden', Response::HTTP_FORBIDDEN);
+        }
+
+        $membership = $this->membershipResolver->resolve(
+            $user,
+            $organizationId,
+        );
+
+        if ($membership === null) {
+            return self::deny('Forbidden', Response::HTTP_FORBIDDEN);
+        }
+
         $roles = $user->getRoles();
 
-        $isAdmin = in_array(
+        $isGlobalAdmin = in_array(
             'ROLE_EVENTFLOW_ADMIN',
             $roles,
             true,
         );
 
-        $isViewer = in_array(
+        $isGlobalViewer = in_array(
             'ROLE_EVENTFLOW_VIEWER',
             $roles,
             true,
         );
 
         if ($request->isMethod('GET')) {
-            if ($isAdmin || $isViewer) {
-                return null;
+            if (!$isGlobalAdmin && !$isGlobalViewer) {
+                return self::deny(
+                    'Forbidden',
+                    Response::HTTP_FORBIDDEN,
+                );
             }
 
-            return self::deny('Forbidden', Response::HTTP_FORBIDDEN);
+            $request->attributes->set(
+                'eventflow.organization_id',
+                $organizationId,
+            );
+
+            return null;
         }
 
         if (
@@ -101,7 +146,7 @@ final readonly class ManagementApiGuard
             return self::deny('Forbidden', Response::HTTP_FORBIDDEN);
         }
 
-        if (!$isAdmin) {
+        if (!$isGlobalAdmin || !$membership->isAdmin()) {
             return self::deny('Forbidden', Response::HTTP_FORBIDDEN);
         }
 
@@ -118,6 +163,11 @@ final readonly class ManagementApiGuard
                 Response::HTTP_FORBIDDEN,
             );
         }
+
+        $request->attributes->set(
+            'eventflow.organization_id',
+            $organizationId,
+        );
 
         return null;
     }

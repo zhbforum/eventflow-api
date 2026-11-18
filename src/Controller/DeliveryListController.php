@@ -75,7 +75,13 @@ final readonly class DeliveryListController
             ->getRepository(WebhookDelivery::class)
             ->createQueryBuilder('d')
             ->innerJoin('d.event', 'e')
-            ->innerJoin('d.endpoint', 'w');
+            ->innerJoin('d.endpoint', 'w')
+            ->andWhere('e.organization = :organization')
+            ->andWhere('w.organization = :organization')
+            ->setParameter(
+                'organization',
+                $request->attributes->getString('eventflow.organization_id'),
+            );
 
         if ($status !== null) {
             $queryBuilder

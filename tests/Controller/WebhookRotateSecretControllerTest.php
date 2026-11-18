@@ -6,6 +6,7 @@ namespace App\Tests\Controller;
 
 use App\Entity\WebhookEndpoint;
 use App\Security\OidcUser;
+use App\Tests\Fixtures\LegacyOrganizationTestContext;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 use Symfony\Component\HttpFoundation\Response;
@@ -178,6 +179,13 @@ final class WebhookRotateSecretControllerTest extends WebTestCase
             'main',
         );
 
+        LegacyOrganizationTestContext::enable(
+            $client,
+            static::getContainer()->get(EntityManagerInterface::class),
+            'viewer-test-user',
+            'viewer',
+        );
+
         $client->request(
             'POST',
             '/api/v1/webhooks/'
@@ -206,6 +214,13 @@ final class WebhookRotateSecretControllerTest extends WebTestCase
                 time(),
             ),
             'main',
+        );
+
+        LegacyOrganizationTestContext::enable(
+            $client,
+            static::getContainer()->get(EntityManagerInterface::class),
+            'admin-test-user',
+            'admin',
         );
 
         $url = '/api/v1/webhooks/'

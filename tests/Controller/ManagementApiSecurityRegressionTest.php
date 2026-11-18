@@ -6,6 +6,7 @@ namespace App\Tests\Controller;
 
 use App\Entity\WebhookEndpoint;
 use App\Security\OidcUser;
+use App\Tests\Fixtures\LegacyOrganizationTestContext;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
@@ -164,10 +165,20 @@ final class ManagementApiSecurityRegressionTest extends WebTestCase
         array $roles,
     ): KernelBrowser {
         $client = static::createClient();
+        $subject = 'security-regression-' . bin2hex(random_bytes(8));
+
+        LegacyOrganizationTestContext::enable(
+            $client,
+            static::getContainer()->get(EntityManagerInterface::class),
+            $subject,
+            in_array('ROLE_EVENTFLOW_ADMIN', $roles, true)
+                ? 'admin'
+                : 'viewer',
+        );
 
         $client->loginUser(
             new OidcUser(
-                'security-regression-user',
+                $subject,
                 'security-user',
                 'security@example.test',
                 $roles,
