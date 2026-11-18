@@ -2,7 +2,7 @@
     "name": "zhbforum/eventflow-api",
     "description": "Event-driven webhook delivery API",
     "type": "project",
-    "license": "proprietary",
+    "license": "MIT",
     "minimum-stability": "stable",
     "prefer-stable": true,
     "require": {
