@@ -1,0 +1,6 @@
+services:
+  app:
+    ports: !reset []
+
+  rabbitmq:
+    ports: !reset []
