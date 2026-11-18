@@ -1,0 +1,1556 @@
+openapi: 3.1.0
+info:
+  title: EventFlow API
+  version: 1.0.0
+  license:
+    name: MIT
+    identifier: MIT
+  description: |-
+    EventFlow HTTP API, including organization and membership management, event publishing, webhooks, deliveries, browser OIDC authentication, health probes, and Prometheus metrics.
+
+    Browser users authenticate through GET /api/v1/auth/login and carry a Symfony session cookie. Normal management routes require X-Organization-Id for session-based requests, write operations also require the management CSRF token from GET /api/v1/auth/csrf. The legacy MANAGEMENT_API_TOKEN Bearer credential is restricted to the legacy organization and is not accepted by Organization Management endpoints.
+
+    The metrics endpoint is internal and uses a separate METRICS_TOKEN. See individual operations for exceptions to these rules.
+servers:
+  - url: /
+    description: Current origin
+tags:
+  - name: Authentication
+    description: Browser OIDC login, callback, session, CSRF, logout
+  - name: Organizations
+    description: Discover and create organizations
+  - name: Organization members
+    description: Manage organization memberships
+  - name: Events
+    description: Create, list, and inspect published events
+  - name: Webhooks
+    description: Manage webhook endpoints and signing secrets
+  - name: Deliveries
+    description: Inspect webhook deliveries and request replay
+  - name: Health
+    description: Liveness, readiness, and application health
+  - name: Observability
+    description: Internal Prometheus-format metrics
+paths:
+  /api/v1/auth/login:
+    get:
+      operationId: startOidcLogin
+      tags:
+        - Authentication
+      summary: Begin OIDC browser login
+      description:
+        Creates OIDC state, nonce, and a PKCE verifier in the session, then redirects the browser
+        to the identity provider authorization endpoint. Complete the process in a browser, preserving the
+        session cookie across the redirect. Not a JSON login endpoint.
+      security: []
+      responses:
+        "302":
+          description: Redirect to the OIDC authorization endpoint
+          headers:
+            Location:
+              description: Redirect destination
+              schema:
+                type: string
+                format: uri-reference
+  /api/v1/auth/callback:
+    get:
+      operationId: completeOidcLogin
+      tags:
+        - Authentication
+      summary: Handle OIDC authorization callback
+      description:
+        Invoked by the identity provider after browser authorization. Symfony Security validates
+        the state, nonce, PKCE, token and roles, on success it creates the authenticated session and redirects
+        to /api/v1/auth/me. Requires the same session cookie as the login request. Do not call this manually
+        with arbitrary codes.
+      security: []
+      parameters:
+        - name: code
+          in: query
+          description: Authorization code (on success)
+          schema:
+            type: string
+        - name: state
+          in: query
+          description: OIDC state (on success)
+          schema:
+            type: string
+        - name: error
+          in: query
+          description: Authorization error (on failure)
+          schema:
+            type: string
+        - name: error_description
+          in: query
+          description: Optional identity-provider error details
+          schema:
+            type: string
+      responses:
+        "302":
+          description: Authenticated, redirect to /api/v1/auth/me
+          headers:
+            Location:
+              description: Redirect destination
+              schema:
+                type: string
+                format: uri-reference
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/auth/me:
+    get:
+      operationId: getCurrentUser
+      tags:
+        - Authentication
+      summary: Get authenticated OIDC user
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Authenticated user and global roles
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentUser"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/auth/csrf:
+    get:
+      operationId: getCsrfTokens
+      tags:
+        - Authentication
+      summary: Get session-bound CSRF tokens
+      description:
+        Returns separate tokens for management mutations and logout. Send management_csrf_token
+        in X-CSRF-Token on management writes. Send logout_csrf_token as application/x-www-form-urlencoded field
+        _csrf_token on logout.
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Logout and management CSRF tokens
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CsrfTokens"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+  /api/v1/auth/logout:
+    post:
+      operationId: logoutOidcUser
+      tags:
+        - Authentication
+      summary: Logout authenticated user and invalidate session
+      description:
+        Symfony Security handles this route. Requires the logout CSRF token as FORM field _csrf_token,
+        not as the management X-CSRF-Token header. On success, invalidates the local session and redirects
+        to the identity provider logout URL.
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                - _csrf_token
+              properties:
+                _csrf_token:
+                  type: string
+                  minLength: 1
+      responses:
+        "303":
+          description: Session invalidated, redirect to OIDC end-session endpoint
+          headers:
+            Location:
+              description: Redirect destination
+              schema:
+                type: string
+                format: uri-reference
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/auth/logged-out:
+    get:
+      operationId: getLoggedOutStatus
+      tags:
+        - Authentication
+      summary: OIDC post-logout landing response
+      description: Public endpoint used as the post-logout redirect URI.
+      security: []
+      responses:
+        "200":
+          description: Logout completed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoggedOut"
+  /api/v1/organizations:
+    get:
+      operationId: listOrganizations
+      tags:
+        - Organizations
+      summary: List organizations accessible to the current user
+      description: |
+        Requires an OIDC session and a global EventFlow admin or viewer role.
+        The user sees only organizations where their OIDC subject has a
+        membership. X-Organization-Id is not required for discovery.
+        Results are ordered by organization name and ID.
+        The legacy management Bearer token is not accepted.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated organizations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createOrganization
+      tags:
+        - Organizations
+      summary: Create an organization
+      description: |
+        Requires a global EventFlow admin role, an authenticated OIDC
+        session, and a management CSRF token. The creator is automatically
+        assigned the organization admin role. No organization header is
+        required for creation. Unknown JSON fields are rejected.
+        The legacy management Bearer token is not accepted.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ManagementCsrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrganizationRequest"
+      responses:
+        "201":
+          description: Organization created and creator assigned as admin
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Organization"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/organizations/{id}/members:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationPathId"
+      - $ref: "#/components/parameters/SelectedOrganization"
+    get:
+      operationId: listOrganizationMembers
+      tags:
+        - Organization members
+      summary: List members of an organization
+      description: |
+        Requires both a global EventFlow admin role and admin membership
+        in the selected organization. X-Organization-Id must exactly
+        match the organization ID in the path. Members are ordered by
+        creation time and ID. The legacy Bearer token is not accepted.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Paginated organization members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationMemberList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: addOrganizationMember
+      tags:
+        - Organization members
+      summary: Add an organization member by OIDC subject
+      description: |
+        Requires global EventFlow admin and organization admin roles,
+        a matching X-Organization-Id header, and a management CSRF token.
+        This creates a membership for an existing OIDC subject string,
+        it does not send an email invitation or verify the subject against
+        the identity provider. Unknown JSON fields are rejected.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ManagementCsrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMembershipRequest"
+      responses:
+        "201":
+          description: Membership created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrganizationMember"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/organizations/{id}/members/{memberId}:
+    parameters:
+      - $ref: "#/components/parameters/OrganizationPathId"
+      - $ref: "#/components/parameters/MemberPathId"
+      - $ref: "#/components/parameters/SelectedOrganization"
+    delete:
+      operationId: deleteOrganizationMember
+      tags:
+        - Organization members
+      summary: Remove an organization membership
+      description: |
+        Requires global EventFlow admin and organization admin roles,
+        a matching X-Organization-Id header, and a management CSRF token.
+        Removing the last organization admin is forbidden even under
+        concurrent requests.
+      security:
+        - sessionCookie: []
+      parameters:
+        - $ref: "#/components/parameters/ManagementCsrf"
+      responses:
+        "204":
+          description: Membership removed, empty response body
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/v1/events:
+    get:
+      operationId: listEvents
+      tags:
+        - Events
+      summary: List events
+      description:
+        Lists events for the selected organization. OIDC users need global viewer/admin role and
+        membership, legacy Bearer access is limited to the legacy organization.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/EventType"
+        - $ref: "#/components/parameters/EventSource"
+      responses:
+        "200":
+          description: Paginated events
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EventList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createEvent
+      tags:
+        - Events
+      summary: Publish an event
+      description:
+        Publishes an event and schedules webhook deliveries. OIDC session writes require global
+        admin role, organization admin membership, and management CSRF. Optional Idempotency-Key ensures replay
+        of the same request and rejects a different request for the same key. The legacy Bearer token can write
+        only to the legacy organization.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+        - $ref: "#/components/parameters/CoreWriteCsrf"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateEventRequest"
+      responses:
+        "201":
+          description: Event created, repeated idempotent requests also return 201
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+          headers:
+            Location:
+              description: Relative URL to the resource
+              schema:
+                type: string
+            Idempotency-Replayed:
+              description: The event already existed for this idempotency key
+              schema:
+                type: string
+                enum:
+                  - "true"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/events/{id}:
+    get:
+      operationId: getEvent
+      tags:
+        - Events
+      summary: Get an event
+      description: Returns an event only if it belongs to the selected organization.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ResourcePathId"
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+      responses:
+        "200":
+          description: Event
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/webhooks:
+    get:
+      operationId: listWebhooks
+      tags:
+        - Webhooks
+      summary: List webhook endpoints
+      description: Lists webhook endpoints belonging to the selected organization.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/WebhookActive"
+        - $ref: "#/components/parameters/WebhookUrl"
+      responses:
+        "200":
+          description: Paginated webhook endpoints
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      operationId: createWebhook
+      tags:
+        - Webhooks
+      summary: Create webhook endpoint
+      description:
+        Requires an HTTPS endpoint URL and at least one valid event subscription. The signing secret
+        is returned only on creation or explicit rotation, treat it as sensitive.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+        - $ref: "#/components/parameters/CoreWriteCsrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateWebhookRequest"
+      responses:
+        "201":
+          description: Webhook created, includes signing secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookSecretCreated"
+          headers:
+            Location:
+              description: Relative URL to the resource
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/webhooks/{id}:
+    get:
+      operationId: getWebhook
+      tags:
+        - Webhooks
+      summary: Get webhook endpoint
+      description: Returns a webhook endpoint without its signing secret.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ResourcePathId"
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+      responses:
+        "200":
+          description: Webhook endpoint
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEndpoint"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    patch:
+      operationId: updateWebhook
+      tags:
+        - Webhooks
+      summary: Update webhook endpoint
+      description:
+        Partial update of URL, subscriptions, or active state. At least one field is required. Null
+        values and unknown fields are rejected.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ResourcePathId"
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+        - $ref: "#/components/parameters/CoreWriteCsrf"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateWebhookRequest"
+      responses:
+        "200":
+          description: Updated webhook endpoint
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookEndpoint"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "415":
+          $ref: "#/components/responses/UnsupportedMediaType"
+        "422":
+          $ref: "#/components/responses/UnprocessableEntity"
+  /api/v1/webhooks/{id}/rotate-secret:
+    post:
+      operationId: rotateWebhookSecret
+      tags:
+        - Webhooks
+      summary: Rotate signing secret
+      description: Immediately replaces the webhook signing secret. The new secret is returned in this response.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ResourcePathId"
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+        - $ref: "#/components/parameters/CoreWriteCsrf"
+      responses:
+        "200":
+          description: New signing secret
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WebhookRotateSecretResponse"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/deliveries:
+    get:
+      operationId: listDeliveries
+      tags:
+        - Deliveries
+      summary: List webhook deliveries
+      description: Lists deliveries where both event and webhook endpoint belong to the selected organization.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/Limit"
+        - $ref: "#/components/parameters/DeliveryStatus"
+        - $ref: "#/components/parameters/DeliveryEventId"
+        - $ref: "#/components/parameters/DeliveryEndpointId"
+      responses:
+        "200":
+          description: Paginated deliveries
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryList"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+  /api/v1/deliveries/{id}:
+    get:
+      operationId: getDelivery
+      tags:
+        - Deliveries
+      summary: Get webhook delivery
+      description: Returns delivery details with the event and endpoint snapshot.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ResourcePathId"
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+      responses:
+        "200":
+          description: Webhook delivery
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryDetail"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /api/v1/deliveries/{id}/replay:
+    post:
+      operationId: replayDelivery
+      tags:
+        - Deliveries
+      summary: Replay failed webhook delivery
+      description:
+        Only failed deliveries can be replayed. A successful replay request queues another attempt
+        and returns 202. OIDC writes require management CSRF.
+      security:
+        - sessionCookie: []
+        - legacyBearer: []
+      parameters:
+        - $ref: "#/components/parameters/ResourcePathId"
+        - $ref: "#/components/parameters/CoreOrganizationHeader"
+        - $ref: "#/components/parameters/CoreWriteCsrf"
+      responses:
+        "202":
+          description: Replay accepted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeliveryReplayResponse"
+          headers:
+            Location:
+              description: Relative URL to the resource
+              schema:
+                type: string
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /api/health:
+    get:
+      operationId: getApiHealth
+      tags:
+        - Health
+      summary: Get API health summary
+      security: []
+      responses:
+        "200":
+          description: API health summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceHealth"
+  /health/live:
+    get:
+      operationId: getLiveness
+      tags:
+        - Health
+      summary: Kubernetes liveness probe
+      description: Does not check database connectivity.
+      security: []
+      responses:
+        "200":
+          description: Application is running
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LiveHealth"
+  /health/ready:
+    get:
+      operationId: getReadiness
+      tags:
+        - Health
+      summary: Kubernetes readiness probe
+      description: Reports whether the database readiness check is passing.
+      security: []
+      responses:
+        "200":
+          description: Database is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessHealth"
+        "503":
+          description: Database is not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReadinessHealth"
+  /internal/metrics:
+    get:
+      operationId: getPrometheusMetrics
+      tags:
+        - Observability
+      summary: Get internal Prometheus metrics
+      description:
+        Requires METRICS_TOKEN as Bearer credentials. Returns Prometheus text exposition format
+        v0.0.4, not JSON. If METRICS_TOKEN is unset, returns 404 with an empty body, invalid credentials return
+        403 with an empty body.
+      security:
+        - metricsBearer: []
+      responses:
+        "200":
+          description: Prometheus exposition text
+          content:
+            text/plain, version=0.0.4:
+              schema:
+                type: string
+        "403":
+          description: Metrics token invalid, empty response body
+        "404":
+          description: Metrics endpoint disabled, empty response body
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: PHPSESSID
+      description: |
+        Symfony session cookie following OIDC login. PHPSESSID is the
+        default session cookie name, deployments may configure another
+        name. This is not an OIDC access token or a Bearer token.
+    legacyBearer:
+      type: http
+      scheme: bearer
+      description:
+        Legacy MANAGEMENT_API_TOKEN for the legacy organization only. Not valid for organization
+        or membership management routes.
+    metricsBearer:
+      type: http
+      scheme: bearer
+      description: METRICS_TOKEN for internal Prometheus scraping, independent of MANAGEMENT_API_TOKEN.
+  parameters:
+    Page:
+      name: page
+      in: query
+      description: One-based page index
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100000
+        default: 1
+    Limit:
+      name: limit
+      in: query
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    OrganizationPathId:
+      name: id
+      in: path
+      required: true
+      description: Organization UUID
+      schema:
+        type: string
+        format: uuid
+    MemberPathId:
+      name: memberId
+      in: path
+      required: true
+      description: Organization membership UUID
+      schema:
+        type: string
+        format: uuid
+    SelectedOrganization:
+      name: X-Organization-Id
+      in: header
+      required: true
+      description: Must match the organization UUID in the path
+      schema:
+        type: string
+        format: uuid
+    ManagementCsrf:
+      name: X-CSRF-Token
+      in: header
+      required: true
+      description: |
+        management_csrf_token returned by GET /api/v1/auth/csrf
+        for an authenticated OIDC session.
+      schema:
+        type: string
+        minLength: 1
+    CoreOrganizationHeader:
+      name: X-Organization-Id
+      in: header
+      required: false
+      description:
+        Required for OIDC session requests, chooses the current organization. Legacy Bearer requests
+        may omit it and are limited to the legacy organization.
+      schema:
+        type: string
+        format: uuid
+    CoreWriteCsrf:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description:
+        Required for OIDC session mutations, get management_csrf_token from GET /api/v1/auth/csrf.
+        Not required for legacy Bearer token requests.
+      schema:
+        type: string
+    ResourcePathId:
+      name: id
+      in: path
+      required: true
+      description: UUID of the resource within the selected organization
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description:
+        Optional key for idempotent event publication. Reusing a key with different request content
+        returns 409.
+      schema:
+        type: string
+    EventType:
+      name: type
+      in: query
+      description: Exact event type
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 150
+    EventSource:
+      name: source
+      in: query
+      description: Exact event source
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 100
+    WebhookActive:
+      name: active
+      in: query
+      description: Filter active or inactive endpoints
+      schema:
+        type: boolean
+    WebhookUrl:
+      name: url
+      in: query
+      description: Case-insensitive substring of endpoint URL
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2048
+    DeliveryStatus:
+      name: status
+      in: query
+      description: Delivery status
+      schema:
+        type: string
+        enum:
+          - pending
+          - processing
+          - delivered
+          - failed
+    DeliveryEventId:
+      name: eventId
+      in: query
+      schema:
+        type: string
+        format: uuid
+    DeliveryEndpointId:
+      name: endpointId
+      in: query
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    Error:
+      type: object
+      additionalProperties: false
+      required:
+        - error
+      properties:
+        error:
+          type: string
+    Pagination:
+      type: object
+      additionalProperties: false
+      required:
+        - page
+        - limit
+        - total
+        - pages
+      properties:
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+        total:
+          type: integer
+          minimum: 0
+        pages:
+          type: integer
+          minimum: 0
+    MembershipRole:
+      type: string
+      enum:
+        - admin
+        - viewer
+    Organization:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - slug
+        - name
+        - role
+        - canManage
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        slug:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: "#/components/schemas/MembershipRole"
+        canManage:
+          type: boolean
+          description: True only for global admins with organization admin membership
+        createdAt:
+          type: string
+          format: date-time
+    OrganizationList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Organization"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    CreateOrganizationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - slug
+        - name
+      properties:
+        slug:
+          type: string
+          minLength: 1
+          maxLength: 63
+          pattern: ^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$
+          example: acme-team
+        name:
+          type: string
+          minLength: 1
+          maxLength: 150
+          description: The server trims surrounding whitespace
+          example: Acme Team
+    OrganizationMember:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - oidcSubject
+        - role
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        oidcSubject:
+          type: string
+        role:
+          $ref: "#/components/schemas/MembershipRole"
+        createdAt:
+          type: string
+          format: date-time
+    OrganizationMemberList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrganizationMember"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    CreateMembershipRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - oidcSubject
+        - role
+      properties:
+        oidcSubject:
+          type: string
+          minLength: 1
+          maxLength: 255
+          description: Must not contain surrounding whitespace
+          example: 8d55f967-3d3b-4793-98ac-bfbcdb28ad62
+        role:
+          $ref: "#/components/schemas/MembershipRole"
+    JsonPayload:
+      description: Arbitrary JSON object or array
+      oneOf:
+        - type: object
+          additionalProperties: true
+        - type: array
+          items: {}
+    Event:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - type
+        - source
+        - payload
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+        source:
+          type: string
+        payload:
+          $ref: "#/components/schemas/JsonPayload"
+        createdAt:
+          type: string
+          format: date-time
+    CreateEventRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - type
+        - source
+        - payload
+      properties:
+        type:
+          type: string
+          minLength: 1
+          maxLength: 150
+        source:
+          type: string
+          minLength: 1
+          maxLength: 100
+        payload:
+          $ref: "#/components/schemas/JsonPayload"
+    EventList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Event"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    WebhookEndpoint:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - url
+        - subscribedEvents
+        - isActive
+        - createdAt
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        subscribedEvents:
+          type: array
+          items:
+            type: string
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    WebhookSecretCreated:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - url
+        - subscribedEvents
+        - isActive
+        - createdAt
+        - signingSecret
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        subscribedEvents:
+          type: array
+          items:
+            type: string
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        signingSecret:
+          type: string
+    WebhookSubscription:
+      type: string
+      pattern: ^[a-z][a-z0-9_-]*(?:\.[a-z][a-z0-9_-]*)+$
+    CreateWebhookRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - url
+        - subscribedEvents
+      properties:
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+          pattern: ^https://
+        subscribedEvents:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookSubscription"
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+    UpdateWebhookRequest:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        url:
+          type: string
+          format: uri
+          maxLength: 2048
+          pattern: ^https://
+        subscribedEvents:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookSubscription"
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+        isActive:
+          type: boolean
+    WebhookList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/WebhookEndpoint"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    WebhookRotateSecretResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - signingSecret
+      properties:
+        id:
+          type: string
+          format: uuid
+        signingSecret:
+          type: string
+    ValidationViolation:
+      type: object
+      additionalProperties: false
+      required:
+        - propertyPath
+        - message
+      properties:
+        propertyPath:
+          type: string
+        message:
+          type: string
+    ValidationViolations:
+      type: object
+      additionalProperties: false
+      required:
+        - violations
+      properties:
+        violations:
+          type: array
+          items:
+            $ref: "#/components/schemas/ValidationViolation"
+    DeliveryStatus:
+      type: string
+      enum:
+        - pending
+        - processing
+        - delivered
+        - failed
+    DeliveryListItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - eventId
+        - eventType
+        - endpointId
+        - endpointUrl
+        - status
+        - attempts
+        - createdAt
+        - deliveredAt
+        - lastError
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        eventType:
+          type: string
+        endpointId:
+          type: string
+          format: uuid
+        endpointUrl:
+          type: string
+          format: uri
+        status:
+          $ref: "#/components/schemas/DeliveryStatus"
+        attempts:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        deliveredAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        lastError:
+          type:
+            - string
+            - "null"
+    DeliveryList:
+      type: object
+      additionalProperties: false
+      required:
+        - items
+        - pagination
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/DeliveryListItem"
+        pagination:
+          $ref: "#/components/schemas/Pagination"
+    DeliveryEndpointSummary:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - url
+        - subscribedEvents
+        - isActive
+      properties:
+        id:
+          type: string
+          format: uuid
+        url:
+          type: string
+          format: uri
+        subscribedEvents:
+          type: array
+          items:
+            type: string
+        isActive:
+          type: boolean
+    DeliveryDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - status
+        - attempts
+        - createdAt
+        - deliveredAt
+        - lastError
+        - event
+        - endpoint
+      properties:
+        id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/DeliveryStatus"
+        attempts:
+          type: integer
+          minimum: 0
+        createdAt:
+          type: string
+          format: date-time
+        deliveredAt:
+          type:
+            - string
+            - "null"
+          format: date-time
+        lastError:
+          type:
+            - string
+            - "null"
+        event:
+          $ref: "#/components/schemas/Event"
+        endpoint:
+          $ref: "#/components/schemas/DeliveryEndpointSummary"
+    DeliveryReplayResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - replayId
+        - deliveryId
+        - replayGeneration
+        - status
+        - requestedAt
+      properties:
+        replayId:
+          type: string
+          format: uuid
+        deliveryId:
+          type: string
+          format: uuid
+        replayGeneration:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+          enum:
+            - pending
+        requestedAt:
+          type: string
+          format: date-time
+    CurrentUser:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - username
+        - email
+        - roles
+      properties:
+        id:
+          type: string
+          description: OIDC subject (sub)
+        username:
+          type: string
+        email:
+          type:
+            - string
+            - "null"
+          format: email
+        roles:
+          type: array
+          items:
+            type: string
+    CsrfTokens:
+      type: object
+      additionalProperties: false
+      required:
+        - logout_csrf_token
+        - management_csrf_token
+      properties:
+        logout_csrf_token:
+          type: string
+          description: Use as form field _csrf_token when posting to auth/logout
+        management_csrf_token:
+          type: string
+          description: Use as X-CSRF-Token header on management mutations
+    LoggedOut:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          const: logged_out
+    ServiceHealth:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - service
+      properties:
+        status:
+          type: string
+          const: ok
+        service:
+          type: string
+          const: eventflow-api
+    LiveHealth:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          const: ok
+    ReadinessHealth:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - checks
+      properties:
+        status:
+          type: string
+          enum:
+            - ready
+            - not_ready
+        checks:
+          type: object
+          additionalProperties: false
+          required:
+            - database
+          properties:
+            database:
+              type: string
+              enum:
+                - up
+                - down
+  responses:
+    BadRequest:
+      description: Invalid request structure or query parameters
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: Missing permissions, invalid session, or invalid CSRF token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Organization or membership not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Conflict:
+      description: Duplicate organization or membership, or last-admin protection
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnsupportedMediaType:
+      description: Expected Content-Type application/json
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    UnprocessableEntity:
+      description: Request validation failed, may contain an error or a violations array.
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: "#/components/schemas/Error"
+              - $ref: "#/components/schemas/ValidationViolations"
+    Unauthorized:
+      description: Unauthenticated or OIDC callback authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"

@@ -1,0 +1,16 @@
+openapi/openapi.yaml:
+  operation-2xx-response:
+    # OIDC endpoints respond with redirects, not 2XX.
+    - "#/paths/~1api~1v1~1auth~1login/get/responses"
+    - "#/paths/~1api~1v1~1auth~1callback/get/responses"
+    - "#/paths/~1api~1v1~1auth~1logout/post/responses"
+
+  operation-4xx-response:
+    # Public login and post-logout endpoints.
+    - "#/paths/~1api~1v1~1auth~1login/get/responses"
+    - "#/paths/~1api~1v1~1auth~1logged-out/get/responses"
+
+    # Public health probes.
+    - "#/paths/~1api~1health/get/responses"
+    - "#/paths/~1health~1live/get/responses"
+    - "#/paths/~1health~1ready/get/responses"
