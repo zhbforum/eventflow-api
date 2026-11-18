@@ -52,6 +52,13 @@ final readonly class ManagementApiAccessSubscriber implements EventSubscriberInt
             return;
         }
 
+        if (
+            $route === 'api_organizations_list'
+            || $route === 'api_organizations_create'
+        ) {
+            return;
+        }
+
         $denied = $this->guard->check($request);
 
         if ($denied !== null) {
