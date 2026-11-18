@@ -64,7 +64,6 @@ final readonly class WebhookDeliveryFailedListener
                 $message->replayGeneration
                 !== $delivery->getReplayGeneration()
             ) {
-                // Stale failures must not affect a newer replay.
                 return;
             }
 
@@ -77,8 +76,7 @@ final readonly class WebhookDeliveryFailedListener
             }
 
             $error = $delivery->getLastError()
-                ?? 'Webhook delivery failed: '
-                . $event->getThrowable()->getMessage();
+                ?? 'Webhook delivery failed';
 
             $delivery->markFailed($error);
 

@@ -53,9 +53,7 @@ final readonly class DeliverWebhookHandler
             ->find($message->deliveryId);
 
         if ($delivery === null) {
-            throw new RuntimeException(
-                'Webhook delivery not found',
-            );
+            throw new RuntimeException('Webhook delivery not found');
         }
 
         $this->entityManager->refresh($delivery);
@@ -64,7 +62,6 @@ final readonly class DeliverWebhookHandler
             $message->replayGeneration
             !== $delivery->getReplayGeneration()
         ) {
-            // Ignore messages from an earlier delivery generation.
             return;
         }
 
@@ -106,6 +103,7 @@ final readonly class DeliverWebhookHandler
         $this->entityManager->flush();
 
         $event = $delivery->getEvent();
+        $statusCode = null;
 
         try {
             $body = json_encode(
@@ -150,13 +148,13 @@ final readonly class DeliverWebhookHandler
                 ],
             );
 
-            $status = $response->getStatusCode();
+            $statusCode = $response->getStatusCode();
 
-            if ($status < 200 || $status >= 300) {
+            if ($statusCode < 200 || $statusCode >= 300) {
                 throw new RuntimeException(
                     sprintf(
                         'Webhook returned HTTP %d',
-                        $status,
+                        $statusCode,
                     ),
                 );
             }
@@ -165,15 +163,25 @@ final readonly class DeliverWebhookHandler
 
             $this->entityManager->flush();
         } catch (Throwable $exception) {
-            $error = $exception instanceof TransportExceptionInterface
-                ? 'HTTP transport error'
-                : $exception->getMessage();
+            $error = 'Webhook delivery failed';
+
+            if (
+                $statusCode !== null
+                && ($statusCode < 200 || $statusCode >= 300)
+            ) {
+                $error = sprintf(
+                    'Webhook returned HTTP %d',
+                    $statusCode,
+                );
+            } elseif ($exception instanceof TransportExceptionInterface) {
+                $error = 'HTTP transport error';
+            }
 
             $delivery->recordFailure($error);
 
             $this->entityManager->flush();
 
-            throw $exception;
+            throw new RuntimeException($error);
         }
     }
 }

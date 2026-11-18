@@ -126,7 +126,7 @@ final class WebhookReplayGenerationTest extends KernelTestCase
         self::assertSame(1, $delivery->getReplayGeneration());
 
         self::assertSame(
-            'Webhook delivery failed: New HTTP 503 failure',
+            'Webhook delivery failed',
             $delivery->getLastError(),
         );
     }
