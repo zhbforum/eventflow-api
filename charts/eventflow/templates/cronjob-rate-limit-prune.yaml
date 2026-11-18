@@ -1,0 +1,73 @@
+{{- if .Values.rateLimitCleanup.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+
+metadata:
+  name: {{ include "eventflow.fullname" . }}-rate-limit-prune
+
+  labels:
+    {{- include "eventflow.labels" . | nindent 4 }}
+    app.kubernetes.io/component: rate-limit-prune
+
+spec:
+  schedule: {{ .Values.rateLimitCleanup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 180
+
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 120
+
+      template:
+        metadata:
+          labels:
+            {{- include "eventflow.selectorLabels" . | nindent 12 }}
+            app.kubernetes.io/component: rate-limit-prune
+
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+          containers:
+            - name: prune
+
+              image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+
+              command:
+                - php
+                - bin/console
+                - app:rate-limit:prune
+
+              envFrom:
+                - configMapRef:
+                    name: {{ include "eventflow.fullname" . }}-config
+
+                - secretRef:
+                    name: {{ .Values.runtimeSecret.name | quote }}
+
+              securityContext:
+                runAsNonRoot: true
+                runAsUser: 33
+                runAsGroup: 33
+                allowPrivilegeEscalation: false
+
+                capabilities:
+                  drop:
+                    - ALL
+
+                seccompProfile:
+                  type: RuntimeDefault
+
+              resources:
+                {{- toYaml .Values.rateLimitCleanup.resources | nindent 16 }}
+{{- end }}

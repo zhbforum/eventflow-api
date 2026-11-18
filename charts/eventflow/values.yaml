@@ -64,3 +64,18 @@ keda:
 
 migrations:
   enabled: false
+
+rateLimitCleanup:
+  enabled: false
+  schedule: "*/10 * * * *"
+
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+rateLimit:
+  enabled: false

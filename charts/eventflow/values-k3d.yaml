@@ -22,3 +22,9 @@ keda:
 
 migrations:
   enabled: true
+
+rateLimitCleanup:
+  enabled: false
+
+rateLimit:
+  enabled: false
