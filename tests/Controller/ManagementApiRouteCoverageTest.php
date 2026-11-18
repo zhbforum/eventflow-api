@@ -46,6 +46,11 @@ final class ManagementApiRouteCoverageTest extends WebTestCase
                     '00000000-0000-7000-8000-000000000000';
             }
 
+            if (str_contains($path, '{memberId}')) {
+                $parameters['memberId'] =
+                    '00000000-0000-7000-8000-000000000000';
+            }
+
             $url = $router->generate($name, $parameters);
 
             foreach ($route->getMethods() as $method) {
