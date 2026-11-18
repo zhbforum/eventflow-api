@@ -10,6 +10,7 @@ use App\Entity\WebhookDelivery;
 use App\Entity\WebhookDeliveryReplay;
 use App\Entity\WebhookEndpoint;
 use App\Security\OidcUser;
+use App\Tests\Fixtures\LegacyOrganizationTestContext;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 use Symfony\Component\HttpFoundation\Response;
@@ -32,6 +33,13 @@ final class DeliveryReplayRbacTest extends WebTestCase
                 time(),
             ),
             'main',
+        );
+
+        LegacyOrganizationTestContext::enable(
+            $client,
+            static::getContainer()->get(EntityManagerInterface::class),
+            'replay-viewer',
+            'viewer',
         );
 
         $client->request('GET', '/api/v1/auth/csrf');
@@ -83,6 +91,13 @@ final class DeliveryReplayRbacTest extends WebTestCase
 
         $em = static::getContainer()->get(
             EntityManagerInterface::class,
+        );
+
+        LegacyOrganizationTestContext::enable(
+            $client,
+            $em,
+            'replay-admin-user',
+            'admin',
         );
 
         $event = new Event(

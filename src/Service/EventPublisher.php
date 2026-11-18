@@ -5,12 +5,14 @@ declare(strict_types=1);
 namespace App\Service;
 
 use App\Entity\Event;
+use App\Entity\Organization;
 use App\Entity\OutboxMessage;
 use App\Entity\WebhookDelivery;
 use App\Entity\WebhookEndpoint;
 use App\Exception\IdempotencyConflictException;
 use Doctrine\ORM\EntityManagerInterface;
 use InvalidArgumentException;
+use LogicException;
 use stdClass;
 
 final readonly class EventPublisher
@@ -35,6 +37,7 @@ final readonly class EventPublisher
         string $idempotencyKey,
         string $rawJson,
         string $idempotencyScope,
+        ?Organization $organization = null,
     ): EventPublicationResult {
         if (
             preg_match(
@@ -54,12 +57,20 @@ final readonly class EventPublisher
             );
         }
 
-        $keyHash = hash(
-            'sha256',
-            json_encode(
-                [$idempotencyScope, $idempotencyKey],
-                JSON_THROW_ON_ERROR,
-            ),
+        $organizationId = $organization?->getId()
+            ?? Organization::LEGACY_ID;
+
+        $effectiveScope = $organizationId === Organization::LEGACY_ID
+            ? $idempotencyScope
+            : sprintf(
+                'organization:%s:%s',
+                $organizationId,
+                $idempotencyScope,
+            );
+
+        $keyHash = EventRequestFingerprint::keyHash(
+            $effectiveScope,
+            $idempotencyKey,
         );
 
         $requestHash = EventRequestFingerprint::fromJson(
@@ -75,6 +86,8 @@ final readonly class EventPublisher
                 $payload,
                 $keyHash,
                 $requestHash,
+                $organization,
+                $organizationId,
             ): EventPublicationResult {
                 $connection = $this->entityManager
                     ->getConnection();
@@ -99,6 +112,15 @@ final readonly class EventPublisher
 
                 if ($existing !== null) {
                     if (
+                        $existing->getOrganizationId()
+                        !== $organizationId
+                    ) {
+                        throw new LogicException(
+                            'Idempotency scope organization mismatch.',
+                        );
+                    }
+
+                    if (
                         $existing->getRequestHash()
                         !== $requestHash
                     ) {
@@ -118,6 +140,7 @@ final readonly class EventPublisher
                     $type,
                     $source,
                     $payload,
+                    $organization,
                 );
 
                 $event->assignIdempotency(
@@ -142,7 +165,10 @@ final readonly class EventPublisher
 
         $endpoints = $this->entityManager
             ->getRepository(WebhookEndpoint::class)
-            ->findBy(['isActive' => true]);
+            ->findBy([
+                'isActive' => true,
+                'organization' => $event->getOrganizationId(),
+            ]);
 
         foreach ($endpoints as $endpoint) {
             if (

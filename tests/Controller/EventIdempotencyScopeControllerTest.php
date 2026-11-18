@@ -6,6 +6,7 @@ namespace App\Tests\Controller;
 
 use App\Entity\Event;
 use App\Security\OidcUser;
+use App\Tests\Fixtures\LegacyOrganizationTestContext;
 use App\Service\EventRequestFingerprint;
 use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
@@ -28,6 +29,17 @@ final class EventIdempotencyScopeControllerTest extends WebTestCase
         ];
 
         $eventIds = [];
+
+        $em = static::getContainer()->get(EntityManagerInterface::class);
+
+        foreach (['scope-admin-a', 'scope-admin-b'] as $subject) {
+            LegacyOrganizationTestContext::enable(
+                $client,
+                $em,
+                $subject,
+                'admin',
+            );
+        }
 
         foreach (
             [

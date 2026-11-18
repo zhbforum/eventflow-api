@@ -32,9 +32,22 @@ final readonly class DeliveryShowController
             return $denied;
         }
 
+        /** @var WebhookDelivery|null $delivery */
         $delivery = $entityManager
             ->getRepository(WebhookDelivery::class)
-            ->find($id);
+            ->createQueryBuilder('d')
+            ->innerJoin('d.event', 'e')
+            ->innerJoin('d.endpoint', 'w')
+            ->andWhere('d.id = :id')
+            ->andWhere('e.organization = :organization')
+            ->andWhere('w.organization = :organization')
+            ->setParameter('id', $id)
+            ->setParameter(
+                'organization',
+                $request->attributes->getString('eventflow.organization_id'),
+            )
+            ->getQuery()
+            ->getOneOrNullResult();
 
         if ($delivery === null) {
             return new JsonResponse(

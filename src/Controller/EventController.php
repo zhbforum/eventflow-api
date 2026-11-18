@@ -6,14 +6,16 @@ namespace App\Controller;
 
 use App\Dto\CreateEventRequest;
 use App\Entity\Event;
+use App\Entity\Organization;
 use App\Exception\IdempotencyConflictException;
+use App\Security\ManagementApiGuard;
+use App\Security\OidcUser;
 use App\Service\EventPublisher;
 use App\Service\EventRequestFingerprint;
-use App\Security\OidcUser;
-use LogicException;
-use Symfony\Bundle\SecurityBundle\Security;
 use Doctrine\ORM\EntityManagerInterface;
 use InvalidArgumentException;
+use LogicException;
+use Symfony\Bundle\SecurityBundle\Security;
 use Symfony\Component\HttpFoundation\JsonResponse;
 use Symfony\Component\HttpFoundation\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -34,7 +36,25 @@ final class EventController
         Request $httpRequest,
         EventPublisher $eventPublisher,
         Security $security,
+        EntityManagerInterface $entityManager,
     ): JsonResponse {
+        $organizationId = $httpRequest->attributes->getString(
+            'eventflow.organization_id',
+        );
+
+        $organization = $entityManager->find(
+            Organization::class,
+            $organizationId,
+        );
+
+        if (!$organization instanceof Organization) {
+            return new JsonResponse(
+                ['error' => 'Forbidden'],
+                Response::HTTP_FORBIDDEN,
+                ['Cache-Control' => 'no-store'],
+            );
+        }
+
         try {
             $payload = EventRequestFingerprint::payloadFromJson(
                 $httpRequest->getContent(),
@@ -52,6 +72,7 @@ final class EventController
                 $request->type,
                 $request->source,
                 $payload,
+                $organization,
             );
 
             $eventPublisher->publish($event);
@@ -93,6 +114,7 @@ final class EventController
                 $key,
                 $httpRequest->getContent(),
                 $scope,
+                $organization,
             );
         } catch (InvalidArgumentException $exception) {
             return new JsonResponse(
@@ -104,7 +126,7 @@ final class EventController
             return new JsonResponse(
                 [
                     'error' =>
-                        'Idempotency-Key was already used '
+                    'Idempotency-Key was already used '
                         . 'with a different request.',
                 ],
                 Response::HTTP_CONFLICT,
@@ -138,11 +160,31 @@ final class EventController
     )]
     public function show(
         string $id,
+        Request $request,
         EntityManagerInterface $entityManager,
+        ManagementApiGuard $guard,
     ): JsonResponse {
+        $denied = $guard->check($request);
+
+        if ($denied !== null) {
+            return $denied;
+        }
+
+        /** @var Event|null $event */
         $event = $entityManager
             ->getRepository(Event::class)
-            ->find($id);
+            ->createQueryBuilder('e')
+            ->andWhere('e.id = :id')
+            ->andWhere('e.organization = :organization')
+            ->setParameter('id', $id)
+            ->setParameter(
+                'organization',
+                $request->attributes->getString(
+                    'eventflow.organization_id',
+                ),
+            )
+            ->getQuery()
+            ->getOneOrNullResult();
 
         if ($event === null) {
             return new JsonResponse(

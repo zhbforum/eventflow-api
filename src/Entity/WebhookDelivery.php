@@ -53,6 +53,12 @@ final class WebhookDelivery
         Event $event,
         WebhookEndpoint $endpoint,
     ) {
+        if ($event->getOrganizationId() !== $endpoint->getOrganizationId()) {
+            throw new LogicException(
+                'Event and webhook endpoint belong to different organizations.',
+            );
+        }
+
         $this->id = Uuid::v7()->toRfc4122();
         $this->event = $event;
         $this->endpoint = $endpoint;

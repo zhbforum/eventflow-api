@@ -36,16 +36,34 @@ final readonly class WebhookUpdateController
             return $denied;
         }
 
+        /** @var WebhookEndpoint|null $endpoint */
         $endpoint = $entityManager
             ->getRepository(WebhookEndpoint::class)
-            ->find($id);
+            ->createQueryBuilder('w')
+            ->andWhere('w.id = :id')
+            ->andWhere('w.organization = :organization')
+            ->setParameter('id', $id)
+            ->setParameter(
+                'organization',
+                $request->attributes->getString(
+                    'eventflow.organization_id',
+                ),
+            )
+            ->getQuery()
+            ->getOneOrNullResult();
 
         if ($endpoint === null) {
-            return self::error('Webhook endpoint not found', 404);
+            return self::error(
+                'Webhook endpoint not found',
+                Response::HTTP_NOT_FOUND,
+            );
         }
 
         if ($request->getContentTypeFormat() !== 'json') {
-            return self::error('Content-Type must be application/json', 415);
+            return self::error(
+                'Content-Type must be application/json',
+                Response::HTTP_UNSUPPORTED_MEDIA_TYPE,
+            );
         }
 
         try {
@@ -125,7 +143,10 @@ final readonly class WebhookUpdateController
             parse_url($url, PHP_URL_USER) !== null
             || parse_url($url, PHP_URL_PASS) !== null
         ) {
-            return self::error('URL credentials are not allowed', 422);
+            return self::error(
+                'URL credentials are not allowed',
+                422,
+            );
         }
 
         $endpoint->update(

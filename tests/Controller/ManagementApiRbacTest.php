@@ -4,7 +4,10 @@ declare(strict_types=1);
 
 namespace App\Tests\Controller;
 
+use App\Entity\Organization;
+use App\Entity\OrganizationMembership;
 use App\Security\OidcUser;
+use Doctrine\ORM\EntityManagerInterface;
 use Symfony\Bundle\FrameworkBundle\KernelBrowser;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
 use Symfony\Component\HttpFoundation\Response;
@@ -179,9 +182,34 @@ final class ManagementApiRbacTest extends WebTestCase
     ): KernelBrowser {
         $client = static::createClient();
 
+        $subject = 'rbac-' . bin2hex(random_bytes(8));
+
+        $em = static::getContainer()->get(EntityManagerInterface::class);
+
+        $organization = $em->find(
+            Organization::class,
+            Organization::LEGACY_ID,
+        );
+
+        self::assertInstanceOf(Organization::class, $organization);
+
+        $em->persist(new OrganizationMembership(
+            $organization,
+            $subject,
+            in_array('ROLE_EVENTFLOW_ADMIN', $roles, true)
+                ? 'admin'
+                : 'viewer',
+        ));
+        $em->flush();
+
+        $client->setServerParameter(
+            'HTTP_X_ORGANIZATION_ID',
+            Organization::LEGACY_ID,
+        );
+
         $client->loginUser(
             new OidcUser(
-                'rbac-test-user',
+                $subject,
                 'test-user',
                 'test@example.test',
                 $roles,

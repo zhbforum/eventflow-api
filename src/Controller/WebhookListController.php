@@ -63,7 +63,12 @@ final readonly class WebhookListController
 
         $queryBuilder = $entityManager
             ->getRepository(WebhookEndpoint::class)
-            ->createQueryBuilder('w');
+            ->createQueryBuilder('w')
+            ->andWhere('w.organization = :organization')
+            ->setParameter(
+                'organization',
+                $request->attributes->getString('eventflow.organization_id'),
+            );
 
         if ($active !== null) {
             $queryBuilder

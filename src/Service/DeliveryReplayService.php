@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace App\Service;
 
+use App\Entity\Organization;
 use App\Entity\OutboxMessage;
 use App\Entity\WebhookDelivery;
 use App\Entity\WebhookDeliveryReplay;
@@ -20,6 +21,7 @@ final readonly class DeliveryReplayService
     public function requestReplay(
         string $deliveryId,
         string $requestedBy,
+        string $organizationId = Organization::LEGACY_ID,
     ): ?WebhookDeliveryReplay {
         if (
             trim($requestedBy) === ''
@@ -34,6 +36,7 @@ final readonly class DeliveryReplayService
             function () use (
                 $deliveryId,
                 $requestedBy,
+                $organizationId,
             ): ?WebhookDeliveryReplay {
                 $connection = $this->entityManager
                     ->getConnection();
@@ -49,11 +52,20 @@ final readonly class DeliveryReplayService
                 );
 
                 $lockedId = $connection->fetchOne(
-                    'SELECT id
-                     FROM webhook_deliveries
-                     WHERE id = :delivery_id
-                     FOR UPDATE',
-                    ['delivery_id' => $deliveryId],
+                    'SELECT d.id
+                     FROM webhook_deliveries d
+                     INNER JOIN events e
+                         ON e.id = d.event_id
+                     INNER JOIN webhook_endpoints w
+                         ON w.id = d.endpoint_id
+                     WHERE d.id = :delivery_id
+                       AND e.organization_id = :organization_id
+                       AND w.organization_id = :organization_id
+                     FOR UPDATE OF d',
+                    [
+                        'delivery_id' => $deliveryId,
+                        'organization_id' => $organizationId,
+                    ],
                 );
 
                 if ($lockedId === false) {
@@ -72,6 +84,15 @@ final readonly class DeliveryReplayService
                 }
 
                 $this->entityManager->refresh($delivery);
+
+                if (
+                    $delivery->getEvent()->getOrganizationId()
+                    !== $organizationId
+                    || $delivery->getEndpoint()->getOrganizationId()
+                    !== $organizationId
+                ) {
+                    return null;
+                }
 
                 if ($delivery->getStatus() !== 'failed') {
                     throw new LogicException(

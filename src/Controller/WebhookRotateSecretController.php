@@ -32,9 +32,21 @@ final readonly class WebhookRotateSecretController
             return $denied;
         }
 
+        /** @var WebhookEndpoint|null $endpoint */
         $endpoint = $entityManager
             ->getRepository(WebhookEndpoint::class)
-            ->find($id);
+            ->createQueryBuilder('w')
+            ->andWhere('w.id = :id')
+            ->andWhere('w.organization = :organization')
+            ->setParameter('id', $id)
+            ->setParameter(
+                'organization',
+                $request->attributes->getString(
+                    'eventflow.organization_id',
+                ),
+            )
+            ->getQuery()
+            ->getOneOrNullResult();
 
         if ($endpoint === null) {
             return new JsonResponse(

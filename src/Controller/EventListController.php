@@ -53,7 +53,12 @@ final readonly class EventListController
 
         $queryBuilder = $entityManager
             ->getRepository(Event::class)
-            ->createQueryBuilder('e');
+            ->createQueryBuilder('e')
+            ->andWhere('e.organization = :organization')
+            ->setParameter(
+                'organization',
+                $request->attributes->getString('eventflow.organization_id'),
+            );
 
         if ($type !== null) {
             $queryBuilder
