@@ -142,7 +142,7 @@ final class OidcSuccessfulCallbackIntegrationTest extends WebTestCase
             ],
         );
 
-        self::assertResponseRedirects('/api/v1/auth/me');
+        self::assertResponseRedirects('/');
 
         self::assertInstanceOf(
             RequestInterface::class,
@@ -185,7 +185,7 @@ final class OidcSuccessfulCallbackIntegrationTest extends WebTestCase
             $client->getSession()->has('oidc.code_verifier'),
         );
 
-        $client->followRedirect();
+        $client->request('GET', '/api/v1/auth/me');
 
         self::assertResponseIsSuccessful();
 
