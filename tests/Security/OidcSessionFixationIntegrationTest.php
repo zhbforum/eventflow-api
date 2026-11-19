@@ -124,7 +124,7 @@ final class OidcSessionFixationIntegrationTest extends WebTestCase
         self::assertResponseStatusCodeSame(Response::HTTP_FOUND);
 
         self::assertSame(
-            '/api/v1/auth/me',
+            '/',
             $client->getResponse()->headers->get('Location'),
         );
 

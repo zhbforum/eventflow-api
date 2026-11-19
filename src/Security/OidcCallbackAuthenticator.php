@@ -181,9 +181,7 @@ final class OidcCallbackAuthenticator extends AbstractAuthenticator
         TokenInterface $token,
         string $firewallName,
     ): RedirectResponse {
-        return new RedirectResponse(
-            '/api/v1/auth/me',
-        );
+        return new RedirectResponse('/');
     }
 
     public function onAuthenticationFailure(
