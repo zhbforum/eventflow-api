@@ -1,0 +1,14 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/compose-spec/compose-spec/main/schema/compose-spec.json
+
+services:
+  keycloak:
+    networks:
+      default: {}
+      k3d-eventflow:
+        aliases:
+          - eventflow-keycloak
+
+networks:
+  k3d-eventflow:
+    external: true
+    name: k3d-eventflow

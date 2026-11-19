@@ -15,3 +15,5 @@
 
 # Local monitoring credentials
 /.secrets/
+
+/.env.oidc.local
