@@ -3,8 +3,10 @@
 services:
   keycloak:
     networks:
-      - default
-      - k3d-eventflow
+      default: {}
+      k3d-eventflow:
+        aliases:
+          - eventflow-keycloak
 
 networks:
   k3d-eventflow:
