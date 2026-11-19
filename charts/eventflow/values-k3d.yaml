@@ -2,7 +2,7 @@
 
 image:
   repository: ghcr.io/zhbforum/eventflow-api
-  tag: "sha-ae8cc458292e637e3d1e93ecd34c8d5f352e48d3"
+  tag: "sha-8a037dd59015afd0f6e6eaa720fca38084873bed"
   pullPolicy: IfNotPresent
 
 imagePullSecrets:
