@@ -24,7 +24,7 @@ migrations:
   enabled: true
 
 rateLimitCleanup:
-  enabled: false
+  enabled: true
 
 rateLimit:
-  enabled: false
+  enabled: true
