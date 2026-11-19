@@ -6,8 +6,7 @@ openapi/openapi.yaml:
     - "#/paths/~1api~1v1~1auth~1logout/post/responses"
 
   operation-4xx-response:
-    # Public login and post-logout endpoints.
-    - "#/paths/~1api~1v1~1auth~1login/get/responses"
+    # Public post-logout endpoint.
     - "#/paths/~1api~1v1~1auth~1logged-out/get/responses"
 
     # Public health probes.

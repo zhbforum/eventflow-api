@@ -11,6 +11,10 @@ info:
     Browser users authenticate through GET /api/v1/auth/login and carry a Symfony session cookie. Normal management routes require X-Organization-Id for session-based requests, write operations also require the management CSRF token from GET /api/v1/auth/csrf. The legacy MANAGEMENT_API_TOKEN Bearer credential is restricted to the legacy organization and is not accepted by Organization Management endpoints.
 
     The metrics endpoint is internal and uses a separate METRICS_TOKEN. See individual operations for exceptions to these rules.
+
+    Request body limits are 1 MiB for POST /api/v1/events and 64 KiB for other modifying /api/v1/ requests. The local reverse proxy has an additional 2 MiB limit. Oversized requests return 413, a reverse proxy may produce its own response format.
+
+    When API_RATE_LIMIT_ENABLED is enabled, authenticated management requests use shared PostgreSQL quotas: 120 reads, 30 writes, or 60 event creations per 60 seconds. Anonymous API requests have a separate limit of 300 per 60 seconds per observed client IP, OIDC login has a limit of 20. Exceeded limits return 429 with Retry-After. IP-based quotas behind an untrusted reverse proxy may be shared by multiple clients.
 servers:
   - url: /
     description: Current origin
@@ -52,6 +56,8 @@ paths:
               schema:
                 type: string
                 format: uri-reference
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/auth/callback:
     get:
       operationId: completeOidcLogin
@@ -113,6 +119,8 @@ paths:
                 $ref: "#/components/schemas/CurrentUser"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/auth/csrf:
     get:
       operationId: getCsrfTokens
@@ -134,6 +142,8 @@ paths:
                 $ref: "#/components/schemas/CsrfTokens"
         "401":
           $ref: "#/components/responses/Unauthorized"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/auth/logout:
     post:
       operationId: logoutOidcUser
@@ -170,6 +180,8 @@ paths:
                 format: uri-reference
         "403":
           $ref: "#/components/responses/Forbidden"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
   /api/v1/auth/logged-out:
     get:
       operationId: getLoggedOutStatus
@@ -213,6 +225,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createOrganization
       tags:
@@ -251,6 +265,10 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/organizations/{id}/members:
     parameters:
       - $ref: "#/components/parameters/OrganizationPathId"
@@ -283,6 +301,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: addOrganizationMember
       tags:
@@ -323,6 +343,10 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/organizations/{id}/members/{memberId}:
     parameters:
       - $ref: "#/components/parameters/OrganizationPathId"
@@ -351,6 +375,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/events:
     get:
       operationId: listEvents
@@ -380,6 +408,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createEvent
       tags:
@@ -431,6 +461,10 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/events/{id}:
     get:
       operationId: getEvent
@@ -455,6 +489,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/webhooks:
     get:
       operationId: listWebhooks
@@ -482,6 +518,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     post:
       operationId: createWebhook
       tags:
@@ -520,6 +558,10 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/webhooks/{id}:
     get:
       operationId: getWebhook
@@ -544,6 +586,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
     patch:
       operationId: updateWebhook
       tags:
@@ -582,6 +626,10 @@ paths:
           $ref: "#/components/responses/UnsupportedMediaType"
         "422":
           $ref: "#/components/responses/UnprocessableEntity"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/webhooks/{id}/rotate-secret:
     post:
       operationId: rotateWebhookSecret
@@ -607,6 +655,10 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/deliveries:
     get:
       operationId: listDeliveries
@@ -635,6 +687,8 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "403":
           $ref: "#/components/responses/Forbidden"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/deliveries/{id}:
     get:
       operationId: getDelivery
@@ -659,6 +713,8 @@ paths:
           $ref: "#/components/responses/Forbidden"
         "404":
           $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/v1/deliveries/{id}/replay:
     post:
       operationId: replayDelivery
@@ -693,6 +749,10 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/Conflict"
+        "413":
+          $ref: "#/components/responses/PayloadTooLarge"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
   /api/health:
     get:
       operationId: getApiHealth
@@ -1548,6 +1608,38 @@ components:
             oneOf:
               - $ref: "#/components/schemas/Error"
               - $ref: "#/components/schemas/ValidationViolations"
+    PayloadTooLarge:
+      description: Request body exceeds the application size limit
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: Payload too large
+    TooManyRequests:
+      description: Shared API request quota exceeded
+      headers:
+        Retry-After:
+          description: Seconds until the current rate-limit window resets
+          schema:
+            type: integer
+            minimum: 1
+        X-RateLimit-Limit:
+          description: Maximum requests permitted in the current window
+          schema:
+            type: integer
+            minimum: 1
+        X-RateLimit-Remaining:
+          description: Requests remaining in the current window
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            error: Rate limit exceeded
     Unauthorized:
       description: Unauthenticated or OIDC callback authentication failed
       content:

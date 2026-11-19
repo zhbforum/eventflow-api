@@ -11,3 +11,4 @@ data:
   APP_ENV: "prod"
   APP_DEBUG: "0"
   DEFAULT_URI: {{ .Values.config.defaultUri | quote }}
+  API_RATE_LIMIT_ENABLED: {{ ternary "1" "0" .Values.rateLimit.enabled | quote }}
