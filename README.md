@@ -15,6 +15,7 @@ EventFlow accepts events over HTTP and delivers them to subscribers via webhooks
 - **Verify the sender and destination.** Each outgoing HTTPS request carries an HMAC-SHA256 signature. The worker blocks private network destinations and disables redirects to protect against server-side request forgery (SSRF).
 - **Keep organizations separate.** Events, subscriptions, and deliveries belong to an organization. Browser users sign in through OpenID Connect, with access governed by global roles and organization membership.
 - **See where work is waiting.** Grafana shows pending deliveries, RabbitMQ queue depth, and the age of the oldest unpublished outbox entry.
+- **Deploy and scale on Kubernetes.** A Helm chart deploys the API, worker, and outbox relay to a self-hosted k3d cluster. Argo CD manages GitOps synchronization, while KEDA scales workers based on RabbitMQ queue depth.
 
 ![Grafana showing completed deliveries and published outbox messages during the local HTTPS demo](docs/images/grafana-overview.png)
 
@@ -28,6 +29,10 @@ Across three runs of the HTTPS demo, nine deliveries reached `delivered`. Each m
 ![PostgreSQL 17](https://img.shields.io/badge/PostgreSQL-17-336791?logo=postgresql&logoColor=white)
 ![RabbitMQ 4.3](https://img.shields.io/badge/RabbitMQ-4.3-B74400?logo=rabbitmq&logoColor=white)
 ![Docker Compose](https://img.shields.io/badge/Docker-Compose-1769AA?logo=docker&logoColor=white)
+![Kubernetes](https://img.shields.io/badge/Kubernetes-326CE5?logo=kubernetes&logoColor=white)
+![Helm](https://img.shields.io/badge/Helm-0F1689?logo=helm&logoColor=white)
+![Argo CD](https://img.shields.io/badge/Argo_CD-EF7B4D?logo=argo&logoColor=white)
+![KEDA](https://img.shields.io/badge/KEDA-326CE5)
 
 Symfony Messenger handles queue processing. Keycloak provides browser-based authentication through OpenID Connect, while Prometheus and Grafana provide monitoring. In the production image, HTTP requests are served by FrankenPHP.
 
@@ -182,6 +187,6 @@ Open **EventFlow Overview** in Grafana. Log in as `admin` with the password from
 
 To stop this stack, repeat the Compose command above with `stop` in place of `up -d --wait`.
 
-### Self-hosted deployment with k3d
+### Kubernetes deployment (k3d, Helm, Argo CD, KEDA)
 
-After successful checks on a push to `main`, CI publishes the production image to GHCR and updates the k3d image tag. In a self-hosted cluster, Argo CD syncs the Helm chart. The API, worker, and outbox relay run as separate Deployments. KEDA scales workers based on RabbitMQ queue length. [Helm chart](charts/eventflow) · [k3d values](charts/eventflow/values-k3d.yaml) · [Argo CD application](gitops/argocd/eventflow-application.yaml)
+After successful checks on a push to `main`, CI publishes the production image to GHCR and updates its image tag for k3d. The self-hosted k3d Kubernetes cluster uses Argo CD to synchronize the Helm chart. Kubernetes runs the API, worker, and outbox relay as separate Deployments, while KEDA scales workers based on RabbitMQ queue depth. [Helm chart](charts/eventflow) · [k3d values](charts/eventflow/values-k3d.yaml) · [Argo CD application](gitops/argocd/eventflow-application.yaml)
