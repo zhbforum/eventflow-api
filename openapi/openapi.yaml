@@ -66,9 +66,9 @@ paths:
       summary: Handle OIDC authorization callback
       description:
         Invoked by the identity provider after browser authorization. Symfony Security validates
-        the state, nonce, PKCE, token and roles, on success it creates the authenticated session and redirects
-        to /api/v1/auth/me. Requires the same session cookie as the login request. Do not call this manually
-        with arbitrary codes.
+        the state, nonce, PKCE, token and roles. On success it creates the authenticated session and redirects
+        to the site root (/). Use GET /api/v1/auth/me with the session cookie to inspect the signed-in user.
+        The callback requires the same session cookie as the login request.
       security: []
       parameters:
         - name: code
@@ -93,7 +93,7 @@ paths:
             type: string
       responses:
         "302":
-          description: Authenticated, redirect to /api/v1/auth/me
+          description: Authenticated, redirect to the site root (/)
           headers:
             Location:
               description: Redirect destination
